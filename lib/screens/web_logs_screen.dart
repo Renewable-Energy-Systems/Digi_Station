@@ -116,6 +116,8 @@ class _WebLogsScreenState extends State<WebLogsScreen>
 
   Future<void> _connectSocket() async {
      final url = await ConfigService().getBaseUrl();
-     SocketService().connect(url);
+     if (url != null) {
+       SocketService().connect(url);
+     }
   }
 }

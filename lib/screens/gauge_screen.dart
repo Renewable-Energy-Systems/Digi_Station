@@ -17,7 +17,8 @@ class GaugeScreen extends StatefulWidget {
 }
 
 class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClientMixin {
-  String liveValue = "--.---";
+  String _thicknessValue = "--.---";
+  String _weightValue = "--.--";
   bool isConnected = false;
   StreamSubscription? _gaugeSub;
   String _machineName = "Unknown";
@@ -33,28 +34,44 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     super.initState();
     _loadConfig();
 
-    // 1) existing gauge data subscription (keeps your SocketService usage)
+    // 1) Subscribe to connection status
+    SocketService().connectionStatus.listen((status) {
+       if (mounted) {
+         setState(() {
+           isConnected = status;
+         });
+       }
+    });
+
+    // 2) existing gauge data subscription
     _gaugeSub = SocketService().gaugeStream.listen((data) {
-      if (data.containsKey('value')) {
-        if (mounted) {
-          setState(() {
-            liveValue = data['value'].toString();
-            isConnected = true;
-          });
-        }
+      print("Received Data: $data"); // Debug log within the app logic
+      
+      if (mounted) {
+        setState(() {
+          if (data.containsKey('height')) {
+            _thicknessValue = data['height'].toString();
+          } 
+          if (data.containsKey('weight')) {
+            _weightValue = data['weight'].toString();
+          }
+           // Fallback for generic 'value' - assume thickness if ambiguous, or ignore? 
+           // User context implies height/weight specific. I'll map value to thickness for backward compat if needed, but logs show specific keys.
+           if (data.containsKey('value') && !data.containsKey('height') && !data.containsKey('weight')) {
+             _thicknessValue = data['value'].toString();
+           }
+        });
       }
     });
 
-    // 2) Connect socket
+    // 3) Connect socket
     _connectSocket();
 
-    // 3) create a WS channel dedicated for DET subscriptions & UI
+    // 4) create a WS channel dedicated for DET subscriptions & UI
     try {
       _detChannel = IOWebSocketChannel.connect(detWsUrl);
       _detChannel!.stream.listen(
         (msg) {
-          // optionally route DET updates here to update gauge
-          // print('DET WS raw: $msg');
         },
         onError: (err) {
           debugPrint('DET WS error: $err');
@@ -63,10 +80,8 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
           debugPrint('DET WS closed');
         },
       );
-      _detChannel = null;
     } catch (_) { // Add catch block
        // ignore or log
-       _detChannel = null;
        _detChannel = null;
     }
   }
@@ -74,14 +89,27 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
   Future<void> _loadConfig() async {
     final name = await ConfigService().getSavedMachineType();
     setState(() {
-      _machineName = name;
+      _machineName = name ?? "Select Machine"; // Use placeholder if null
     });
   }
 
   Future<void> _connectSocket() async {
     final url = await ConfigService().getBaseUrl();
+    if (url == null) {
+      // If no URL selected, ensure disconnected and UI shows 'Select'
+      SocketService().disconnect(); 
+      setState(() {
+        _machineIp = "";
+        isConnected = false;
+      });
+      return;
+    }
+
     setState(() {
       _machineIp = url;
+      // Reset data on switch to prevent mixing
+      _thicknessValue = "--.---";
+      _weightValue = "--.--";
     });
     SocketService().connect(url);
   }
@@ -105,18 +133,45 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Live Gauge",
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 20),
+        title: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: _machineName == "Unknown" || _machineName == "Select Machine" ? null : _machineName,
+            hint: const Text(
+              "Select Machine",
+              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
             ),
-            Text(
-              "Model: $_machineName", 
-              style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.normal),
-            )
-          ],
+            icon: const Icon(Icons.arrow_drop_down, color: Colors.blueAccent),
+            isExpanded: false,
+            items: ConfigService.machineUrls.entries.map((entry) {
+              return DropdownMenuItem<String>(
+                value: entry.key,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      entry.key,
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                    Text(
+                      entry.value.replaceAll("http://", "").replaceAll(":5050", ""),
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (String? newValue) async {
+              if (newValue != null) {
+                // Update Config
+                await ConfigService().saveMachineType(newValue);
+                // Update UI & Connect
+                _loadConfig();
+                _connectSocket();
+              }
+            },
+          ),
         ),
         backgroundColor: Colors.white,
         elevation: 1,
@@ -129,6 +184,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                 await Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
                 );
+                // Sync back if changed in settings
                 _loadConfig();
                 _connectSocket();
               },
@@ -202,60 +258,95 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                 ),
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 10),
 
-              // Gauge Value Card
-              Container(
-                padding: const EdgeInsets.all(50),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(40),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
-                      blurRadius: 30,
-                      offset: const Offset(0, 15),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    const Text(
-                      "CURRENT MEASUREMENT",
-                      style: TextStyle(
-                        fontSize: 14,
-                        letterSpacing: 1.5,
-                        color: Colors.grey,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      liveValue,
-                      style: const TextStyle(
-                        fontFamily: 'monospace', // Better for numbers
-                        fontSize: 80,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0A66FF),
-                        letterSpacing: -2,
-                      ),
-                    ),
-                     const Text(
-                      "mm", // Assuming unit, can be dynamic
-                      style: TextStyle(
-                        fontSize: 20,
-                        color: Colors.grey,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
+              // THICKNESS Card
+              _buildGaugeCard(
+                title: "THICKNESS",
+                value: _thicknessValue,
+                unit: "mm",
+                valueColor: const Color(0xFF0A66FF),
+              ),
+
+              const SizedBox(height: 16),
+
+              // WEIGHT Card
+              _buildGaugeCard(
+                title: "WEIGHT",
+                value: _weightValue,
+                unit: "g",
+                valueColor: const Color(0xFFFF9800), // Orange for weight distinction
               ),
               
               const SizedBox(height: 40),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildGaugeCard({
+    required String title,
+    required String value,
+    required String unit,
+    required Color valueColor,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.all(30),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 14,
+              letterSpacing: 1.5,
+              color: Colors.grey,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 50,
+                  fontWeight: FontWeight.w700,
+                  color: valueColor,
+                  letterSpacing: -2,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10, left: 8),
+                child: Text(
+                  unit,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

@@ -11,9 +11,9 @@ class ConfigService {
     'HPM': 'http://192.168.0.204:5050',
   };
 
-  Future<String> getSavedMachineType() async {
+  Future<String?> getSavedMachineType() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyMachineType) ?? 'EPM'; // Default to EPM
+    return prefs.getString(_keyMachineType); // No default
   }
 
   Future<void> saveMachineType(String type) async {
@@ -21,9 +21,10 @@ class ConfigService {
     await prefs.setString(_keyMachineType, type);
   }
 
-  Future<String> getBaseUrl() async {
+  Future<String?> getBaseUrl() async {
     final type = await getSavedMachineType();
-    return machineUrls[type] ?? machineUrls['EPM']!;
+    if (type == null) return null;
+    return machineUrls[type];
   }
 
   // Baked-in Token from --dart-define
