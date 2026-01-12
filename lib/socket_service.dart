@@ -63,6 +63,15 @@ class SocketService {
       }
     });
 
+    socket!.on("pi_health_update", (data) {
+      if (data is Map) {
+        _gaugeController.add({
+          'pi_temp': data['temp_c'], 
+          'pi_throttled': data['throttled']
+        });
+      }
+    });
+
     socket!.on("gauge_update", (data) {
       print("[SOCKET] gauge_update received: $data");
       if (data is Map) {

@@ -23,6 +23,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
   StreamSubscription? _gaugeSub;
   String _machineName = "Unknown";
   String _machineIp = "";
+  
+  // Pi Health
+  String _piTempValue = "--";
+  bool? _piThrottled;
 
   // WebSocket channel for DET selector & updates
   WebSocketChannel? _detChannel;
@@ -54,6 +58,13 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
           } 
           if (data.containsKey('weight')) {
             _weightValue = data['weight'].toString();
+          }
+          if (data.containsKey('pi_temp')) {
+             final t = data['pi_temp'];
+             _piTempValue = (t != null) ? t.toString() : "--";
+          }
+          if (data.containsKey('pi_throttled')) {
+            _piThrottled = data['pi_throttled'];
           }
            // Fallback for generic 'value' - assume thickness if ambiguous, or ignore? 
            // User context implies height/weight specific. I'll map value to thickness for backward compat if needed, but logs show specific keys.
@@ -260,22 +271,28 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
 
               const SizedBox(height: 10),
 
-              // THICKNESS Card
-              _buildGaugeCard(
-                title: "THICKNESS",
-                value: _thicknessValue,
-                unit: "mm",
-                valueColor: const Color(0xFF0A66FF),
+              // Combined Thickness and Weight Card
+              _buildCombinedCard(
+                title1: "THICKNESS",
+                value1: _thicknessValue,
+                unit1: "mm",
+                color1: const Color(0xFF0A66FF),
+                title2: "WEIGHT",
+                value2: _weightValue,
+                unit2: "g",
+                color2: const Color(0xFFFF9800),
               ),
 
               const SizedBox(height: 16),
 
-              // WEIGHT Card
+              // PI TEMP Card
               _buildGaugeCard(
-                title: "WEIGHT",
-                value: _weightValue,
-                unit: "g",
-                valueColor: const Color(0xFFFF9800), // Orange for weight distinction
+                title: "PI TEMP",
+                value: _piTempValue,
+                unit: "°C",
+                valueColor: _getTempColor(),
+                statusText: _getTempStatus(),
+                statusColor: _getTempColor(),
               ),
               
               const SizedBox(height: 40),
@@ -291,6 +308,8 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     required String value,
     required String unit,
     required Color valueColor,
+    String? statusText,
+    Color? statusColor,
   }) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -346,8 +365,122 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
               ),
             ],
           ),
+          if (statusText != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: statusColor,
+              ),
+            ),
+          ]
         ],
       ),
     );
+  }
+
+  Widget _buildCombinedCard({
+    required String title1,
+    required String value1,
+    required String unit1,
+    required Color color1,
+    required String title2,
+    required String value2,
+    required String unit2,
+    required Color color2,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 10),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _buildValueColumn(title1, value1, unit1, color1)),
+          Container(
+            width: 1, 
+            height: 80, 
+            color: Colors.grey.withOpacity(0.2),
+          ),
+          Expanded(child: _buildValueColumn(title2, value2, unit2, color2)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildValueColumn(String title, String value, String unit, Color color) {
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 14,
+            letterSpacing: 1.5,
+            color: Colors.grey,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 36, // Slightly smaller to fit two side-by-side
+                fontWeight: FontWeight.w700,
+                color: color,
+                letterSpacing: -1,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6, left: 4),
+              child: Text(
+                unit,
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Color _getTempColor() {
+     if (_piThrottled == true) return Colors.red;
+     final t = double.tryParse(_piTempValue);
+     if (t == null) return Colors.black;
+     if (t >= 80) return Colors.red;
+     if (t >= 70) return Colors.orange;
+     if (t >= 60) return const Color(0xFFB58900); // darkish yellow
+     return Colors.green;
+  }
+
+  String? _getTempStatus() {
+     if (_piThrottled == true) return "THROTTLING!";
+     final t = double.tryParse(_piTempValue);
+     if (t == null) return null;
+     if (t >= 80) return "OVERHEAT";
+     if (t >= 70) return "HOT";
+     if (t >= 60) return "WARM";
+     return "OK";
   }
 }
