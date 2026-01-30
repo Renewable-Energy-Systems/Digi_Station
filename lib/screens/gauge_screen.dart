@@ -8,6 +8,7 @@ import '../config/api_constants.dart';
 import '../services/config_service.dart';
 import 'det_selector_screen.dart';
 import 'settings_screen.dart';
+import '../services/update_service.dart';
 
 class GaugeScreen extends StatefulWidget {
   const GaugeScreen({super.key});
@@ -32,11 +33,14 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
   WebSocketChannel? _detChannel;
   final String detWsUrl = ApiConstants.detWsUrl; 
   final String apiHost = ApiConstants.detApiHost; 
+  
+  bool _updateAvailable = false;
 
   @override
   void initState() {
     super.initState();
     _loadConfig();
+    _checkUpdate();
 
     // 1) Subscribe to connection status
     SocketService().connectionStatus.listen((status) {
@@ -97,6 +101,17 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     }
   }
 
+  Future<void> _checkUpdate() async {
+    final result = await UpdateService().checkForUpdate();
+    if (result != null && result['updateAvailable'] == true) {
+      if (mounted) {
+        setState(() {
+          _updateAvailable = true;
+        });
+      }
+    }
+  }
+
   Future<void> _loadConfig() async {
     final name = await ConfigService().getSavedMachineType();
     setState(() {
@@ -144,45 +159,19 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       appBar: AppBar(
-        title: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: _machineName == "Unknown" || _machineName == "Select Machine" ? null : _machineName,
-            hint: const Text(
-              "Select Machine",
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _machineName,
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
             ),
-            icon: const Icon(Icons.arrow_drop_down, color: Colors.blueAccent),
-            isExpanded: false,
-            items: ConfigService.machineUrls.entries.map((entry) {
-              return DropdownMenuItem<String>(
-                value: entry.key,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      entry.key,
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
-                    ),
-                    Text(
-                      entry.value.replaceAll("http://", "").replaceAll(":5050", ""),
-                      style: const TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-            onChanged: (String? newValue) async {
-              if (newValue != null) {
-                // Update Config
-                await ConfigService().saveMachineType(newValue);
-                // Update UI & Connect
-                _loadConfig();
-                _connectSocket();
-              }
-            },
-          ),
+            if (_machineIp.isNotEmpty)
+              Text(
+                _machineIp.replaceAll("http://", "").replaceAll(":5050", ""),
+                style: const TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+          ],
         ),
         backgroundColor: Colors.white,
         elevation: 1,
@@ -198,23 +187,41 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                 // Sync back if changed in settings
                 _loadConfig();
                 _connectSocket();
+                _checkUpdate(); // Re-check after settings
               },
               borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
+              child: Stack(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                      border: Border.all(color: Colors.grey.withOpacity(0.1)),
                     ),
-                  ],
-                  border: Border.all(color: Colors.grey.withOpacity(0.1)),
-                ),
-                child: const Icon(Icons.settings, color: Colors.blueGrey, size: 24),
+                    child: const Icon(Icons.settings, color: Colors.blueGrey, size: 24),
+                  ),
+                  if (_updateAvailable)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
