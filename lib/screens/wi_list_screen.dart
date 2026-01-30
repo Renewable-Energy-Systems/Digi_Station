@@ -3,25 +3,61 @@ import '../models/work_instruction.dart';
 import '../widgets/wi_card.dart';
 import 'video_player_screen.dart';
 import 'gauge_screen.dart'; // Import the gauge screen
+import '../services/config_service.dart';
 
-class WIListScreen extends StatelessWidget {
+import '../constants/work_instructions.dart'; // Import constants
+
+class WIListScreen extends StatefulWidget {
   const WIListScreen({super.key});
 
-  // Demo static list
-  List<WorkInstruction> _demoWI() {
-    return const [
-      WorkInstruction(
-        id: 'WI-PRD-28',
-        title: 'Pellet Manufacturing',
-        description: 'WI-PRD-28',
-        videoPath: 'file:///storage/emulated/0/videos/pellet_manufacturing.mp4',
-      ),
-    ];
+  @override
+  State<WIListScreen> createState() => _WIListScreenState();
+}
+
+class _WIListScreenState extends State<WIListScreen> {
+  // Configured videos (Map logic removed in favor of Settings config)
+  List<WorkInstruction> _currentWis = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVideos();
+  }
+
+  Future<void> _loadVideos() async {
+    final configService = ConfigService();
+    // 1. Get enabled video IDs from Settings
+    final enabledIds = await configService.getEnabledVideoIds();
+
+    if (enabledIds.isNotEmpty) {
+      // 2. Filter master list based on enabled IDs
+      // Using master list from shared constants
+      final all = WorkInstructionsConstants.allWis;
+      final filtered = all.where((wi) => enabledIds.contains(wi.id)).toList();
+      
+      if (mounted) {
+        setState(() {
+          _currentWis = filtered;
+          _isLoading = false;
+        });
+      }
+    } else {
+      // 3. Fallback: Show ALL videos if nothing configured
+      if (mounted) {
+        setState(() {
+          _currentWis = WorkInstructionsConstants.allWis;
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final wis = _demoWI();
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -32,26 +68,28 @@ class WIListScreen extends StatelessWidget {
         centerTitle: false,
         elevation: 0,
       ),
-      body: ListView.builder(
-        itemCount: wis.length,
-        itemBuilder: (context, index) {
-          final wi = wis[index];
-          return WICard(
-            wi: wi,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => VideoPlayerScreen(
-                    title: wi.title,
-                    videoPath: wi.videoPath,
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+      body: _currentWis.isEmpty
+          ? const Center(child: Text('No videos configured for this Workstation ID. \nCheck Settings -> Workstation Configuration'))
+          : ListView.builder(
+              itemCount: _currentWis.length,
+              itemBuilder: (context, index) {
+                final wi = _currentWis[index];
+                return WICard(
+                  wi: wi,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => VideoPlayerScreen(
+                          title: wi.title,
+                          videoPath: wi.videoPath,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
     );
   }
 }

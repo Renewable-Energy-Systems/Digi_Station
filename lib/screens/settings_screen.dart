@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/config_service.dart';
 import '../services/update_service.dart';
 import 'package:ota_update/ota_update.dart';
+import '../constants/work_instructions.dart'; // Import constants
 
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -21,23 +22,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _updateStatus = '';
   String _appVersion = '';
 
+  final TextEditingController _workstationIdController = TextEditingController();
+  final List<String> _selectedVideoIds = []; // Track selected videos
+
   @override
   void initState() {
     super.initState();
     _loadSettings();
   }
 
+  @override
+  void dispose() {
+    _workstationIdController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadSettings() async {
     final machine = await _configService.getSavedMachineType();
+    final workstationId = await _configService.getWorkstationId();
+    final savedVideoIds = await _configService.getEnabledVideoIds();
     final packageInfo = await PackageInfo.fromPlatform();
     
     if (mounted) {
       setState(() {
         _selectedMachine = machine;
+        _workstationIdController.text = workstationId ?? '';
+        _selectedVideoIds.clear();
+        _selectedVideoIds.addAll(savedVideoIds);
         _appVersion = packageInfo.version;
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _saveVideoSelection() async {
+    await _configService.saveEnabledVideoIds(_selectedVideoIds);
   }
 
   Future<void> _saveSettings(String? newValue) async {
@@ -49,9 +68,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved as $newValue. Please restart app or navigate to apply changes.')),
+          SnackBar(content: Text('Saved as $newValue.')),
         );
       }
+    }
+  }
+
+  Future<void> _saveWorkstationId() async {
+    final id = _workstationIdController.text.trim();
+    await _configService.saveWorkstationId(id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Workstation ID saved as "$id"')),
+      );
     }
   }
 
@@ -189,6 +218,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
+
+                const SizedBox(height: 24),
+
+                const Text(
+                  'Workstation Configuration',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Workstation ID (e.g. PRD-025)'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _workstationIdController,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  hintText: 'Enter ID',
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: _saveWorkstationId,
+                              child: const Text('Save'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                const Text(
+                  'Video Configuration',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: WorkInstructionsConstants.allWis.map((wi) {
+                      final isSelected = _selectedVideoIds.contains(wi.id);
+                      return CheckboxListTile(
+                        title: Text(wi.title),
+                        subtitle: Text(wi.id),
+                        value: isSelected,
+                        onChanged: (val) {
+                          setState(() {
+                            if (val == true) {
+                              _selectedVideoIds.add(wi.id);
+                            } else {
+                              _selectedVideoIds.remove(wi.id);
+                            }
+                          });
+                          _saveVideoSelection();
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 24),
                 
                 // Update Section
                 Card(
@@ -213,7 +311,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   child: const Text('Check for Updates'),
                                 ),
                         ),
-                        if (_updateStatus.isNotEmpty && !_isCheckingUpdate) // Only show status text if not checking (e.g. error msg)
+                        if (_updateStatus.isNotEmpty && !_isCheckingUpdate)
                            Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(_updateStatus, style: const TextStyle(color: Colors.red)),
