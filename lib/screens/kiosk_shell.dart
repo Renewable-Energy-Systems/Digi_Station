@@ -33,6 +33,9 @@ class _KioskShellState extends State<KioskShell> {
   int _pageIndex = 1; // start in the middle (Home)
   final UpdateService _updateService = UpdateService();
 
+  // GlobalKey to access HomeScreen functionality
+  final GlobalKey<home.HomeScreenState> _homeKey = GlobalKey<home.HomeScreenState>();
+
   @override
   void initState() {
     super.initState();
@@ -44,12 +47,16 @@ class _KioskShellState extends State<KioskShell> {
     // no const because widget constructors are not const
     _pages = [
       WebLogsScreen(), // index 0 (left)
-      home.HomeScreen(), // index 1 (center) — note the prefix
+      home.HomeScreen(key: _homeKey), // index 1 (center) — note the prefix
       WIListScreen(), // index 2 (right)
       gauge.GaugeScreen(), // index 3 — note the prefix
       DetSelectorScreen(         // index 4
         apiHost: widget.apiHost,
         channel: widget.channel,
+        onDetChanged: () {
+          // Trigger refresh on Home Screen
+          _homeKey.currentState?.refreshSensorInfo();
+        },
       ),
     ];
   }

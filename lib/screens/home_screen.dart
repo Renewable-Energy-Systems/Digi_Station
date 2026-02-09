@@ -27,6 +27,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     ).replace(queryParameters: {'param': param.toString()});
     final resp = await http.get(uri).timeout(const Duration(seconds: 6));
     if (resp.statusCode != 200) return null;
+    print('[DEBUG] sensorinfo response: ${resp.body}'); // Added debug log
     final j = json.decode(resp.body);
     if (j is Map && j['found'] == true && j['sensor'] is Map) {
       return Map<String, dynamic>.from(j['sensor']);
@@ -59,6 +60,8 @@ Future<Map<String, String>> getEffectiveSensorInfo(
       'probeId': '',
       'calibrationDate': '',
       'calibrationDue': '',
+      'min': '',
+      'max': '',
     };
 
   final local = await loadLocalSensorInfo(param);
@@ -78,6 +81,17 @@ Future<Map<String, String>> getEffectiveSensorInfo(
       'probeId': master['SenID']?.toString() ?? '',
       'calibrationDate': stripDate(master['Cali.Date']),
       'calibrationDue': stripDate(master['Cali.Due']),
+      'min': master['Min']?.toString() ?? '',
+      'max': master['Max']?.toString() ?? '',
+    };
+    print('[DEBUG] Parsed info: $master'); // Added debug log
+    return {
+      'workstation': master['ChannelName']?.toString() ?? '',
+      'probeId': master['SenID']?.toString() ?? '',
+      'calibrationDate': stripDate(master['Cali.Date']),
+      'calibrationDue': stripDate(master['Cali.Due']),
+      'min': master['Min']?.toString() ?? '',
+      'max': master['Max']?.toString() ?? '',
     };
   }
 
@@ -86,6 +100,8 @@ Future<Map<String, String>> getEffectiveSensorInfo(
     'probeId': '',
     'calibrationDate': '',
     'calibrationDue': '',
+    'min': '',
+    'max': '',
   };
 }
 
@@ -93,10 +109,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
+class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
   // Colors (same as your original)
   static const blueMain = Color(0xFF0A66FF); // header + bottom bar
   static const bgGradientTop = Color(0xFFF7FAFF); // page bg start
@@ -117,6 +133,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   String probeId = '';
   String calibrationDate = '';
   String calibrationDue = '';
+  String minVal = '';
+  String maxVal = '';
 
   // Dew point display & last-updated timestamp (moved to dew card)
   String dewPointDisplay = '-- °C';
@@ -165,6 +183,9 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         probeId = info['probeId'] ?? '';
         calibrationDate = info['calibrationDate'] ?? '';
         calibrationDue = info['calibrationDue'] ?? '';
+        minVal = info['min'] ?? '';
+        maxVal = info['max'] ?? '';
+
         // don't change dewpoint on load; updatedAt will be set when WS message arrives
       });
     }
@@ -289,6 +310,13 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
 
   // manual refresh (if you call it)
   Future<void> refreshSensorInfo() async {
+    // RELOAD the selected DET from prefs so we pick up the change
+    final prefs = await SharedPreferences.getInstance();
+    final savedDet = prefs.getString('selected_det_column');
+    if (savedDet != null) {
+      setState(() => selectedDetColumn = savedDet);
+    }
+
     final info = await getEffectiveSensorInfo(selectedDetColumn, apiHost);
     if (mounted) {
       setState(() {
@@ -296,6 +324,9 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         probeId = info['probeId'] ?? '';
         calibrationDate = info['calibrationDate'] ?? '';
         calibrationDue = info['calibrationDue'] ?? '';
+        minVal = info['min'] ?? '';
+        maxVal = info['max'] ?? '';
+
         updatedAt = DateTime.now().toString();
       });
     }
@@ -366,6 +397,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                               dewBigNumber: const Color(0xFF0A66FF),
                               updatedAt: updatedAt,
                               dewPointDisplay: dewPointDisplay,
+                              minVal: minVal,
+                              maxVal: maxVal,
                             ),
                           ],
                         );
@@ -398,6 +431,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                               dewBigNumber: const Color(0xFF0A66FF),
                               updatedAt: updatedAt,
                               dewPointDisplay: dewPointDisplay,
+                              minVal: minVal,
+                              maxVal: maxVal,
                             ),
                           ),
                         ],
@@ -592,6 +627,8 @@ class _DewPointCard extends StatelessWidget {
     required this.dewBigNumber,
     required this.dewPointDisplay,
     required this.updatedAt,
+    required this.minVal,
+    required this.maxVal,
   });
 
   final Color dewBg;
@@ -601,15 +638,34 @@ class _DewPointCard extends StatelessWidget {
 
   final String dewPointDisplay;
   final String updatedAt;
+  final String minVal;
+  final String maxVal;
 
   TextStyle get _headingStyle =>
       TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: dewLabelText);
+
+  Color get _statusColor {
+    // Clean string to get number
+    final cleanVal = dewPointDisplay.replaceAll(RegExp(r'[^0-9.-]'), '');
+    final val = double.tryParse(cleanVal);
+    final min = double.tryParse(minVal);
+    final max = double.tryParse(maxVal);
+
+    if (val != null && min != null && max != null) {
+      if (val >= min && val <= max) {
+        return const Color(0xFF00C853); // Green for In Range (OK)
+      } else {
+        return const Color(0xFFD50000); // Red for Out of Range
+      }
+    }
+    return dewBigNumber; // Default Blue if range not defined
+  }
 
   TextStyle get _bigNumberStyle => TextStyle(
     fontSize: 108,
     fontWeight: FontWeight.w900,
     height: 1.0,
-    color: dewBigNumber,
+    color: _statusColor, // Dynamic color
     letterSpacing: -2,
   );
 
@@ -617,6 +673,18 @@ class _DewPointCard extends StatelessWidget {
     fontSize: 14,
     fontWeight: FontWeight.w500,
     color: Color(0xFF7A8AA6),
+  );
+
+  TextStyle get _minMaxLabelStyle => TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w500,
+    color: dewLabelText.withOpacity(0.6),
+  );
+
+  TextStyle get _minMaxValueStyle => TextStyle(
+    fontSize: 18,
+    fontWeight: FontWeight.w700,
+    color: dewBigNumber, // Use the blue color for values
   );
 
   @override
@@ -676,8 +744,42 @@ class _DewPointCard extends StatelessWidget {
               ),
             ),
           ),
+          
+          if (true) ...[
+             Container(
+              margin: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9), // Subtle grey background
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    "PERMITTED RANGE",
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                      color: dewLabelText.withOpacity(0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildMinMax("Min", minVal),
+                      Container(width: 1, height: 40, color: const Color(0xFFCBD5E1)), // Vertical divider
+                      _buildMinMax("Max", maxVal),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 4),
 
           // moved "Updated: ..." here (left aligned at bottom)
           Align(
@@ -686,6 +788,32 @@ class _DewPointCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMinMax(String label, String val) {
+    final displayVal = val.isEmpty ? '--' : '$val °C';
+    // Check if value is actually empty or null to decide on styling
+    // But here we rely on text. Using a larger font for visibility.
+    return Column(
+      children: [
+        Text(
+          displayVal,
+          style: TextStyle(
+            fontSize: 24, // Much larger for visibility from distance
+            fontWeight: FontWeight.w800,
+            color: dewBigNumber,
+          ),
+        ),
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: dewLabelText.withOpacity(0.6),
+          ),
+        ),
+      ],
     );
   }
 }

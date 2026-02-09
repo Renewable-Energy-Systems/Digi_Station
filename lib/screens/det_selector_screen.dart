@@ -25,6 +25,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     final resp = await http.get(uri).timeout(const Duration(seconds: 6));
     if (resp.statusCode == 200) {
       final j = json.decode(resp.body);
+      print('[DEBUG] DetSelector response: $j'); // Added debug log
       if (j is Map && j['found'] == true && j['sensor'] is Map) {
         return Map<String, dynamic>.from(j['sensor']);
       }
@@ -53,9 +54,14 @@ Future<void> saveLocalSensorInfo(int param, Map<String, String> info) async {
 class DetSelectorScreen extends StatefulWidget {
   final WebSocketChannel? channel;
   final String apiHost;
+  final VoidCallback? onDetChanged; // Added callback
 
-  const DetSelectorScreen({Key? key, required this.apiHost, this.channel})
-    : super(key: key);
+  const DetSelectorScreen({
+    Key? key,
+    required this.apiHost,
+    this.channel,
+    this.onDetChanged, // Added to constructor
+  }) : super(key: key);
 
   @override
   State<DetSelectorScreen> createState() => _DetSelectorScreenState();
@@ -66,10 +72,31 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
   bool loadingSensor = false;
   bool saving = false;
 
+  // ... (controllers remain same)
+
+// ...
+
+  void _onDetChanged(String? col) async { // Made async
+    setState(() => selectedDet = col);
+    
+    // Save immediately to prefs
+    if (col != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_det_column', col);
+      
+      // Notify parent to refresh Home Screen
+      widget.onDetChanged?.call();
+    }
+    
+    _loadSensorInfoFor(col);
+  }
+
   final _workstationCtrl = TextEditingController();
   final _probeCtrl = TextEditingController();
   final _calDateCtrl = TextEditingController();
   final _calDueCtrl = TextEditingController();
+  final _minCtrl = TextEditingController();
+  final _maxCtrl = TextEditingController();
 
   @override
   void dispose() {
@@ -77,6 +104,8 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
     _probeCtrl.dispose();
     _calDateCtrl.dispose();
     _calDueCtrl.dispose();
+    _minCtrl.dispose();
+    _maxCtrl.dispose();
     super.dispose();
   }
 
@@ -135,6 +164,8 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
         _probeCtrl.text = local['probeId'] ?? '';
         _calDateCtrl.text = local['calibrationDate'] ?? '';
         _calDueCtrl.text = local['calibrationDue'] ?? '';
+        _minCtrl.text = local['min'] ?? '';
+        _maxCtrl.text = local['max'] ?? '';
       } else if (master != null) {
         _workstationCtrl.text = master['ChannelName']?.toString() ?? '';
         _probeCtrl.text = master['SenID']?.toString() ?? '';
@@ -149,11 +180,16 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
         // ensure we store/display only YYYY-MM-DD (no T00:00)
         _calDateCtrl.text = stripDate(master['Cali.Date']);
         _calDueCtrl.text = stripDate(master['Cali.Due']);
+        _minCtrl.text = master['Min']?.toString() ?? '';
+        _maxCtrl.text = master['Max']?.toString() ?? '';
       } else {
         _workstationCtrl.text = '';
         _probeCtrl.text = '';
         _calDateCtrl.text = '';
+        _calDateCtrl.text = '';
         _calDueCtrl.text = '';
+        _minCtrl.text = '';
+        _maxCtrl.text = '';
       }
     } catch (e) {
       print('loadSensorInfo error: $e');
@@ -179,11 +215,13 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
     }
 
     setState(() => saving = true);
-    final map = {
+    final Map<String, String> map = {
       'workstation': _workstationCtrl.text.trim(),
       'probeId': _probeCtrl.text.trim(),
       'calibrationDate': _calDateCtrl.text.trim(),
       'calibrationDue': _calDueCtrl.text.trim(),
+      'min': _minCtrl.text.trim(),
+      'max': _maxCtrl.text.trim(),
     };
     await saveLocalSensorInfo(param, map);
     // optional: notify via WS that this tablet saved a local override (server will ignore for DB)
@@ -192,6 +230,10 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
         json.encode({'action': 'sensorinfo_local_saved', 'param': param}),
       );
     } catch (_) {}
+    
+    // Notify Home Screen immediately
+    widget.onDetChanged?.call();
+
     if (mounted) {
       setState(() => saving = false);
       ScaffoldMessenger.of(
@@ -200,10 +242,78 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
     }
   }
 
-  void _onDetChanged(String? col) {
-    setState(() => selectedDet = col);
-    _loadSensorInfoFor(col);
+
+
+  Future<void> _forceLoadFromDb() async {
+    final col = selectedDet;
+    if (col == null) return;
+    setState(() => loadingSensor = true);
+
+    try {
+      final param = detToParamNumber(col);
+      if (param == null) return;
+
+      // 1. Fetch from Server
+      final master = await fetchSensorInfoFromServerByParam(widget.apiHost, param);
+      
+      if (master != null) {
+         // Helper to strip date
+         String stripDate(dynamic v) {
+            if (v == null) return '';
+            final s = v.toString();
+            final idx = s.indexOf('T');
+            return idx > 0 ? s.substring(0, idx) : s;
+         }
+
+         // 2. Prepare data for local save (overwrite)
+         final Map<String, String> newData = {
+            'workstation': master['ChannelName']?.toString() ?? '',
+            'probeId': master['SenID']?.toString() ?? '',
+            'calibrationDate': stripDate(master['Cali.Date']),
+            'calibrationDue': stripDate(master['Cali.Due']),
+            'min': master['Min']?.toString() ?? '',
+            'max': master['Max']?.toString() ?? '',
+         };
+
+         // 3. Overwrite local storage
+         await saveLocalSensorInfo(param, newData);
+
+         // 4. Update UI (Controllers)
+         _workstationCtrl.text = newData['workstation']!;
+         _probeCtrl.text = newData['probeId']!;
+         _calDateCtrl.text = newData['calibrationDate']!;
+         _calDueCtrl.text = newData['calibrationDue']!;
+         _minCtrl.text = newData['min']!;
+         _maxCtrl.text = newData['max']!;
+         
+         // 5. Notify Home Screen
+         widget.onDetChanged?.call();
+
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('Restored from Server & Saved Locally')),
+           );
+         }
+      } else {
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('Could not fetch from server')),
+           );
+         }
+      }
+    } catch (e) {
+      print('_forceLoadFromDb error: $e');
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('Error: $e')),
+         );
+      }
+    } finally {
+      if (mounted) setState(() => loadingSensor = false);
+    }
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -234,6 +344,8 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
 
                   _calDateCtrl.text = stripDate(map['Cali.Date']);
                   _calDueCtrl.text = stripDate(map['Cali.Due']);
+                  _minCtrl.text = map['Min']?.toString() ?? '';
+                  _maxCtrl.text = map['Max']?.toString() ?? '';
                 }
               },
             ),
@@ -282,6 +394,22 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _minCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Min Dew Point',
+                        suffixText: '°C',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _maxCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Max Dew Point',
+                        suffixText: '°C',
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -289,7 +417,7 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
                         ElevatedButton.icon(
                           onPressed: (selectedDet == null || loadingSensor)
                               ? null
-                              : () => _loadSensorInfoFor(selectedDet),
+                              : _forceLoadFromDb,
                           icon: const Icon(Icons.refresh),
                           label: const Text('Load from PC DB'),
                         ),
