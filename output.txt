@@ -1,0 +1,9 @@
+generate_alert_sound.dart:9:57: Error: Constant evaluation error:
+  const int numSamples = (sampleRate * durationSeconds) as int;
+                                                        ^
+generate_alert_sound.dart:9:57: Context: Expected constant '11025.0' to be of type 'int', but was of type 'double'.
+  const int numSamples = (sampleRate * durationSeconds) as int;
+                                                        ^
+generate_alert_sound.dart:9:13: Context: While analyzing:
+  const int numSamples = (sampleRate * durationSeconds) as int;
+            ^

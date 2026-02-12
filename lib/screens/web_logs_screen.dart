@@ -23,13 +23,18 @@ class _WebLogsScreenState extends State<WebLogsScreen>
 
     // 1. Subscribe to the Gauge Stream
     _gaugeSub = SocketService().gaugeStream.listen((data) {
-      if (data.containsKey('value')) {
-        final newValue = data['value'].toString();
+      String? newValue;
 
-        // Only inject if the page has finished loading to avoid errors
-        if (!_isLoading) {
-          _injectValueIntoWeb(newValue);
-        }
+      if (data.containsKey('height')) {
+        newValue = data['height'].toString();
+      } else if (data.containsKey('weight')) {
+        newValue = data['weight'].toString();
+      } else if (data.containsKey('value')) {
+        newValue = data['value'].toString();
+      }
+
+      if (newValue != null && !_isLoading) {
+        _injectValueIntoWeb(newValue);
       }
     });
 
@@ -50,7 +55,7 @@ class _WebLogsScreenState extends State<WebLogsScreen>
           },
         ),
       )
-      ..loadRequest(Uri.parse('https://logi.weberq.in')); //
+      ..loadRequest(Uri.parse('http://ops.resindia.co.in')); //
   }
 
   @override

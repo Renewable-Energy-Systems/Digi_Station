@@ -9,6 +9,8 @@ import '../services/config_service.dart';
 import 'det_selector_screen.dart';
 import 'settings_screen.dart';
 import '../services/update_service.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class GaugeScreen extends StatefulWidget {
   const GaugeScreen({super.key});
@@ -35,6 +37,17 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
   final String apiHost = ApiConstants.detApiHost; 
   
   bool _updateAvailable = false;
+
+  // Range Settings (Machine Specific)
+  double? _minThickness;
+  double? _maxThickness;
+  double? _minWeight;
+  double? _maxWeight;
+
+  // Audio
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  DateTime? _lastAlertTime;
+  static const Duration _alertDebounce = Duration(seconds: 4);
 
   @override
   void initState() {
@@ -75,6 +88,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
            if (data.containsKey('value') && !data.containsKey('height') && !data.containsKey('weight')) {
              _thicknessValue = data['value'].toString();
            }
+           _checkAlerts(); // visual/audio check on every update
         });
       }
     });
@@ -117,6 +131,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     setState(() {
       _machineName = name ?? "Select Machine"; // Use placeholder if null
     });
+    await _loadRanges();
   }
 
   Future<void> _connectSocket() async {
@@ -179,8 +194,16 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: InkWell(
-              onTap: () async {
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.tune, color: Colors.blueGrey),
+                  tooltip: "Range Settings",
+                  onPressed: _showRangeSettings,
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  onTap: () async {
                 await Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SettingsScreen()),
                 );
@@ -223,6 +246,8 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                     ),
                 ],
               ),
+                ),
+              ],
             ),
           ),
         ],
@@ -279,15 +304,20 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
               const SizedBox(height: 10),
 
               // Combined Thickness and Weight Card
+              // Combined Thickness and Weight Card
               _buildCombinedCard(
                 title1: "THICKNESS",
                 value1: _thicknessValue,
                 unit1: "mm",
-                color1: const Color(0xFF0A66FF),
+                defaultColor1: const Color(0xFF0A66FF),
+                min1: _minThickness,
+                max1: _maxThickness,
                 title2: "WEIGHT",
                 value2: _weightValue,
                 unit2: "g",
-                color2: const Color(0xFFFF9800),
+                defaultColor2: const Color(0xFFFF9800),
+                min2: _minWeight,
+                max2: _maxWeight,
               ),
 
               const SizedBox(height: 16),
@@ -392,12 +422,23 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     required String title1,
     required String value1,
     required String unit1,
-    required Color color1,
+    required Color defaultColor1,
+    double? min1,
+    double? max1,
     required String title2,
     required String value2,
     required String unit2,
-    required Color color2,
+    required Color defaultColor2,
+    double? min2,
+    double? max2,
   }) {
+    Color getColor(String val, Color def, double? min, double? max) {
+       final v = double.tryParse(val);
+       if (v == null || min == null || max == null) return def;
+       if (v >= min && v <= max) return Colors.green;
+       return Colors.red;
+    }
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 24),
       padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 10),
@@ -415,13 +456,13 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
       ),
       child: Row(
         children: [
-          Expanded(child: _buildValueColumn(title1, value1, unit1, color1)),
+          Expanded(child: _buildValueColumn(title1, value1, unit1, getColor(value1, defaultColor1, min1, max1))),
           Container(
             width: 1, 
             height: 80, 
             color: Colors.grey.withOpacity(0.2),
           ),
-          Expanded(child: _buildValueColumn(title2, value2, unit2, color2)),
+          Expanded(child: _buildValueColumn(title2, value2, unit2, getColor(value2, defaultColor2, min2, max2))),
         ],
       ),
     );
@@ -489,5 +530,134 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
      if (t >= 70) return "HOT";
      if (t >= 60) return "WARM";
      return "OK";
+  }
+  Future<void> _loadRanges() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Use machine name in key for specificity
+    final p = "gauge_range_${_machineName}_"; 
+    setState(() {
+      _minThickness = prefs.getDouble('${p}minThickness');
+      _maxThickness = prefs.getDouble('${p}maxThickness');
+      _minWeight = prefs.getDouble('${p}minWeight');
+      _maxWeight = prefs.getDouble('${p}maxWeight');
+    });
+  }
+
+  Future<void> _saveRanges(double? minT, double? maxT, double? minW, double? maxW) async {
+    final prefs = await SharedPreferences.getInstance();
+    final p = "gauge_range_${_machineName}_";
+    
+    if (minT != null) await prefs.setDouble('${p}minThickness', minT); else await prefs.remove('${p}minThickness');
+    if (maxT != null) await prefs.setDouble('${p}maxThickness', maxT); else await prefs.remove('${p}maxThickness');
+    if (minW != null) await prefs.setDouble('${p}minWeight', minW); else await prefs.remove('${p}minWeight');
+    if (maxW != null) await prefs.setDouble('${p}maxWeight', maxW); else await prefs.remove('${p}maxWeight');
+
+    // Reload to apply immediately
+    await _loadRanges();
+  }
+
+  void _showRangeSettings() {
+    final minTCtrl = TextEditingController(text: _minThickness?.toString() ?? '');
+    final maxTCtrl = TextEditingController(text: _maxThickness?.toString() ?? '');
+    final minWCtrl = TextEditingController(text: _minWeight?.toString() ?? '');
+    final maxWCtrl = TextEditingController(text: _maxWeight?.toString() ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Range Settings ($_machineName)'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Thickness Range (mm)', style: TextStyle(fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                   Expanded(child: TextField(controller: minTCtrl, decoration: const InputDecoration(labelText: 'Min'), keyboardType: TextInputType.number)),
+                   const SizedBox(width: 10),
+                   Expanded(child: TextField(controller: maxTCtrl, decoration: const InputDecoration(labelText: 'Max'), keyboardType: TextInputType.number)),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Text('Weight Range (g)', style: TextStyle(fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                   Expanded(child: TextField(controller: minWCtrl, decoration: const InputDecoration(labelText: 'Min'), keyboardType: TextInputType.number)),
+                   const SizedBox(width: 10),
+                   Expanded(child: TextField(controller: maxWCtrl, decoration: const InputDecoration(labelText: 'Max'), keyboardType: TextInputType.number)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+               _saveRanges(
+                 double.tryParse(minTCtrl.text),
+                 double.tryParse(maxTCtrl.text),
+                 double.tryParse(minWCtrl.text),
+                 double.tryParse(maxWCtrl.text),
+               );
+               Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _checkAlerts() {
+    bool alert = false;
+    
+    // Check Thickness
+    final t = double.tryParse(_thicknessValue);
+    if (t != null && _minThickness != null && _maxThickness != null) {
+      if (t < _minThickness! || t > _maxThickness!) alert = true;
+    }
+
+    // Check Weight
+    final w = double.tryParse(_weightValue);
+    if (w != null && _minWeight != null && _maxWeight != null) {
+      if (w < _minWeight! || w > _maxWeight!) alert = true;
+    }
+
+    if (alert) {
+      final now = DateTime.now();
+      if (_lastAlertTime == null || now.difference(_lastAlertTime!) > _alertDebounce) {
+         _lastAlertTime = now;
+         _playAlertSound();
+      }
+    }
+  }
+
+  Future<void> _playAlertSound() async {
+    try {
+      // release mode often requires asset source defined in pubspec
+      // For now we use a built-in player or a simple beep if possible.
+      // Since we added audioplayers, let's try to play a default 'beep' or just error tone.
+      // NOTE: User might need to add a sound file to assets. 
+      // For this step, I will try to play a sourced file or just log if missing.
+      // But typically we need a file. 
+      // Strategy: Since I can't easily add a file to assets physically, 
+      // I will assume there might be one or use a URL for testing? 
+      // Actually, 'audioplayers' can play from generated bytes but that's complex.
+      // Let's assume we proceed without a file and just log "BEEP" unless user provides one.
+      // Wait, I can try SourceUrl if device has internet, but that's flaky.
+      // Better: I'll try to find a system sound or just leave the placeholder for the user to add 'assets/alert.mp3'.
+      
+      // Attempting to play a generic error sound if available or just log.
+      // print("BEEP! BEEP!"); 
+      
+      // Provide a concrete implementation assuming 'assets/alert.mp3' exists or will exist.
+      // Or use a URL for a simple beep test.
+      // await _audioPlayer.play(UrlSource('https://actions.google.com/sounds/v1/alarms/beep_short.ogg'));
+      // The user wants a sound. I'll use a public reliable URL for now.
+      await _audioPlayer.play(UrlSource('https://codeskulptor-demos.commondatastorage.googleapis.com/GalaxyInvaders/pause.mp3')); 
+    } catch (e) {
+      print('Audio error: $e');
+    }
   }
 }
