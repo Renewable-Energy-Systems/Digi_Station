@@ -3,7 +3,7 @@
     <!-- Allow HTTP for local/internal servers -->
     <domain-config cleartextTrafficPermitted="true">
         <!-- Replace this with the domain or IP you are loading -->
-        <domain includeSubdomains="true">logi.weberq.in</domain>
+        <domain includeSubdomains="true">ops.resindia.co.in</domain>
         <!-- EXAMPLE:
              <domain includeSubdomains="true">logi.weberq.in</domain>
              or your LAN hostname -->
