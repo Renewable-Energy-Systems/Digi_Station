@@ -5,10 +5,10 @@ class ConfigService {
 
   // Map of Machine Type to IP Address (Base URL)
   static const Map<String, String> machineUrls = {
-    'EPM': 'http://192.168.0.201:5050',
+    'HPM': 'http://192.168.0.201:5050',
     'CPM': 'http://192.168.0.202:5050',
     'APM': 'http://192.168.0.203:5050',
-    'HPM': 'http://192.168.0.204:5050',
+    'EPM': 'http://192.168.0.204:5050',
   };
 
   static const String _keyWorkstationId = 'workstation_id';
