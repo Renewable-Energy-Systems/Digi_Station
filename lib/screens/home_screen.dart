@@ -1,6 +1,7 @@
 // lib/screens/home_screen.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -138,8 +139,43 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
 
   // Dew point display & last-updated timestamp (moved to dew card)
   String dewPointDisplay = '-- °C';
+  String ppmDisplay = '-- ppm'; // Added state for PPM
   String updatedAt = '––';
   String status = 'idle';
+
+  // Helper: Calculate Corrected Sonntag (ppmv)
+  String calculateSonntagPpm(double tempC) {
+    const double P = 101325.0; // Standard atmospheric pressure in Pa
+    final double T = tempC + 273.15; // Kelvin
+
+    double lnEs;
+    if (tempC < 0.01) {
+      // Over ice (Sonntag 1990)
+      lnEs = -6024.5282 / T +
+          29.32707 +
+          1.0613868e-2 * T -
+          1.3198825e-5 * T * T -
+          0.49382577 * math.log(T);
+    } else {
+      // Over water
+      lnEs = -6096.9385 / T +
+          21.2409642 -
+          2.711193e-2 * T +
+          1.673952e-5 * T * T +
+          2.433502 * math.log(T);
+    }
+
+    final double es = math.exp(lnEs); // Vapor pressure in Pa
+    final double ppm = (es / (P - es)) * 1e6;
+
+    // Format: integer for most, maybe 1 decimal if small?
+    // User table shows integers even for small values (e.g. 5).
+    // Let's stick to integer for consistency with table, unless < 1.
+    if (ppm < 1.0 && ppm > 0.0) {
+       return '${ppm.toStringAsFixed(2)} ppm';
+    }
+    return '${ppm.round()} ppm';
+  }
 
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (°C)';
@@ -263,6 +299,19 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
           if (mounted) {
             setState(() {
               dewPointDisplay = dewStr;
+              // Calculate PPM if we have a valid dew point
+              if (dew != null &&
+                  dew.toString().toLowerCase() != 'null' &&
+                  dew.toString().trim() != '') {
+                final double? val = double.tryParse(dew.toString());
+                if (val != null) {
+                  ppmDisplay = calculateSonntagPpm(val);
+                } else {
+                  ppmDisplay = '-- ppm';
+                }
+              } else {
+                ppmDisplay = '-- ppm';
+              }
               updatedAt = updated;
               status = 'ok';
             });
@@ -397,6 +446,7 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
                               dewBigNumber: const Color(0xFF0A66FF),
                               updatedAt: updatedAt,
                               dewPointDisplay: dewPointDisplay,
+                              ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
                             ),
@@ -431,6 +481,7 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
                               dewBigNumber: const Color(0xFF0A66FF),
                               updatedAt: updatedAt,
                               dewPointDisplay: dewPointDisplay,
+                              ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
                             ),
@@ -626,6 +677,7 @@ class _DewPointCard extends StatelessWidget {
     required this.dewLabelText,
     required this.dewBigNumber,
     required this.dewPointDisplay,
+    required this.ppmDisplay,
     required this.updatedAt,
     required this.minVal,
     required this.maxVal,
@@ -637,6 +689,7 @@ class _DewPointCard extends StatelessWidget {
   final Color dewBigNumber;
 
   final String dewPointDisplay;
+  final String ppmDisplay;
   final String updatedAt;
   final String minVal;
   final String maxVal;
@@ -662,11 +715,24 @@ class _DewPointCard extends StatelessWidget {
   }
 
   TextStyle get _bigNumberStyle => TextStyle(
-    fontSize: 108,
+    fontSize: 96, // Slightly reduced to fit both
     fontWeight: FontWeight.w900,
     height: 1.0,
     color: _statusColor, // Dynamic color
     letterSpacing: -2,
+  );
+
+  TextStyle get _ppmLabelStyle => TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    color: dewLabelText.withOpacity(0.7),
+    letterSpacing: 0.5,
+  );
+
+  TextStyle get _ppmValueStyle => TextStyle(
+    fontSize: 28,
+    fontWeight: FontWeight.w800,
+    color: dewLabelText,
   );
 
   TextStyle get _updatedStyle => const TextStyle(
@@ -695,7 +761,7 @@ class _DewPointCard extends StatelessWidget {
         maxWidth: 480,
         minHeight: 200,
       ),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20), // Slightly reduced padding
       decoration: BoxDecoration(
         color: dewBg,
         borderRadius: BorderRadius.circular(18),
@@ -726,29 +792,125 @@ class _DewPointCard extends StatelessWidget {
                   color: Color(0xFF5A8DFF),
                 ),
               ),
-              const SizedBox(width: 12),
-              Text('Dew Point', style: _headingStyle),
+              const SizedBox(width: 8),
+              Text('Dew Point / PPMv', style: _headingStyle),
+              
+              const Spacer(),
+              
+              // LIVE Indicator
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9), // Light green bg
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF4CAF50), width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF2E7D32), // Darker green dot
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF2E7D32),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
 
-          // center the large number vertically + horizontally
-          Expanded(
-            child: Center(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  dewPointDisplay,
-                  style: _bigNumberStyle,
-                  textAlign: TextAlign.center,
+          const Spacer(),
+
+          // Main values Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center, 
+            children: [
+              // Dew Point Section
+              Expanded( 
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Fixed height container to align baselines and labels
+                    SizedBox(
+                      height: 60, 
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            dewPointDisplay,
+                            style: _bigNumberStyle.copyWith(fontSize: 42), // Reduced to proper fit
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Dew Point",
+                      style: _ppmLabelStyle,
+                    ),
+                  ],
                 ),
               ),
-            ),
+              
+              // Vertical Divider
+              Container(
+                height: 50,
+                width: 2, 
+                color: const Color(0xFFE2E8F0), 
+                margin: const EdgeInsets.symmetric(horizontal: 24),
+              ),
+
+              // PPM Section
+              Expanded( 
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                     SizedBox(
+                      height: 60,
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            ppmDisplay.replaceAll(' ppm', ''),
+                            style: _bigNumberStyle.copyWith(
+                               fontSize: 42, 
+                               color: _statusColor, 
+                            ), 
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "PPMv", 
+                      style: _ppmLabelStyle,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
+
+          const Spacer(),
           
           if (true) ...[
              Container(
-              margin: const EdgeInsets.only(bottom: 16.0, left: 16.0, right: 16.0),
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+              margin: const EdgeInsets.symmetric(vertical: 12.0),
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
               decoration: BoxDecoration(
                 color: const Color(0xFFF1F5F9), // Subtle grey background
                 borderRadius: BorderRadius.circular(12),
@@ -759,18 +921,18 @@ class _DewPointCard extends StatelessWidget {
                   Text(
                     "PERMITTED RANGE",
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 1.2,
                       color: dewLabelText.withOpacity(0.8),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _buildMinMax("Min", minVal),
-                      Container(width: 1, height: 40, color: const Color(0xFFCBD5E1)), // Vertical divider
+                      Container(width: 1, height: 24, color: const Color(0xFFCBD5E1)), // Vertical divider
                       _buildMinMax("Max", maxVal),
                     ],
                   ),
@@ -779,9 +941,7 @@ class _DewPointCard extends StatelessWidget {
             ),
           ],
 
-          const SizedBox(height: 4),
-
-          // moved "Updated: ..." here (left aligned at bottom)
+          // Updated timestamp
           Align(
             alignment: Alignment.centerLeft,
             child: Text('Updated: $updatedAt', style: _updatedStyle),
