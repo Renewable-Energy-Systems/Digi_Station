@@ -55,7 +55,7 @@ Future<Map<String, String>> getEffectiveSensorInfo(
   String apiHost,
 ) async {
   final param = detToParamNumber(detName);
-  if (param == null)
+  if (param == null) {
     return {
       'workstation': '',
       'probeId': '',
@@ -64,6 +64,7 @@ Future<Map<String, String>> getEffectiveSensorInfo(
       'min': '',
       'max': '',
     };
+  }
 
   final local = await loadLocalSensorInfo(param);
   if (local != null) return local;
@@ -113,7 +114,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => HomeScreenState();
 }
 
-class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
+class HomeScreenState extends State<HomeScreen>
+    with AutomaticKeepAliveClientMixin {
   // Colors (same as your original)
   static const blueMain = Color(0xFF0A66FF); // header + bottom bar
   static const bgGradientTop = Color(0xFFF7FAFF); // page bg start
@@ -151,14 +153,16 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
     double lnEs;
     if (tempC < 0.01) {
       // Over ice (Sonntag 1990)
-      lnEs = -6024.5282 / T +
+      lnEs =
+          -6024.5282 / T +
           29.32707 +
           1.0613868e-2 * T -
           1.3198825e-5 * T * T -
           0.49382577 * math.log(T);
     } else {
       // Over water
-      lnEs = -6096.9385 / T +
+      lnEs =
+          -6096.9385 / T +
           21.2409642 -
           2.711193e-2 * T +
           1.673952e-5 * T * T +
@@ -172,7 +176,7 @@ class HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMix
     // User table shows integers even for small values (e.g. 5).
     // Let's stick to integer for consistency with table, unless < 1.
     if (ppm < 1.0 && ppm > 0.0) {
-       return '${ppm.toStringAsFixed(2)} ppm';
+      return '${ppm.toStringAsFixed(2)} ppm';
     }
     return '${ppm.round()} ppm';
   }
@@ -545,10 +549,7 @@ class _TopHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             alignment: Alignment.center,
-            child: Image.asset(
-              'assets/res_logo.png',
-              fit: BoxFit.contain,
-            ),
+            child: Image.asset('assets/res_logo.png', fit: BoxFit.contain),
           ),
           const SizedBox(width: 16),
           const Expanded(
@@ -729,11 +730,8 @@ class _DewPointCard extends StatelessWidget {
     letterSpacing: 0.5,
   );
 
-  TextStyle get _ppmValueStyle => TextStyle(
-    fontSize: 28,
-    fontWeight: FontWeight.w800,
-    color: dewLabelText,
-  );
+  TextStyle get _ppmValueStyle =>
+      TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: dewLabelText);
 
   TextStyle get _updatedStyle => const TextStyle(
     fontSize: 14,
@@ -794,9 +792,9 @@ class _DewPointCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text('Dew Point / PPMv', style: _headingStyle),
-              
+
               const Spacer(),
-              
+
               // LIVE Indicator
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -837,49 +835,48 @@ class _DewPointCard extends StatelessWidget {
           // Main values Row
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center, 
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               // Dew Point Section
-              Expanded( 
+              Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // Fixed height container to align baselines and labels
                     SizedBox(
-                      height: 60, 
+                      height: 60,
                       child: Center(
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Text(
                             dewPointDisplay,
-                            style: _bigNumberStyle.copyWith(fontSize: 42), // Reduced to proper fit
+                            style: _bigNumberStyle.copyWith(
+                              fontSize: 42,
+                            ), // Reduced to proper fit
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      "Dew Point",
-                      style: _ppmLabelStyle,
-                    ),
+                    Text("Dew Point", style: _ppmLabelStyle),
                   ],
                 ),
               ),
-              
+
               // Vertical Divider
               Container(
                 height: 50,
-                width: 2, 
-                color: const Color(0xFFE2E8F0), 
+                width: 2,
+                color: const Color(0xFFE2E8F0),
                 margin: const EdgeInsets.symmetric(horizontal: 24),
               ),
 
               // PPM Section
-              Expanded( 
+              Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                     SizedBox(
+                    SizedBox(
                       height: 60,
                       child: Center(
                         child: FittedBox(
@@ -887,18 +884,15 @@ class _DewPointCard extends StatelessWidget {
                           child: Text(
                             ppmDisplay.replaceAll(' ppm', ''),
                             style: _bigNumberStyle.copyWith(
-                               fontSize: 42, 
-                               color: _statusColor, 
-                            ), 
+                              fontSize: 42,
+                              color: _statusColor,
+                            ),
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      "PPMv", 
-                      style: _ppmLabelStyle,
-                    ),
+                    Text("PPMv", style: _ppmLabelStyle),
                   ],
                 ),
               ),
@@ -906,9 +900,9 @@ class _DewPointCard extends StatelessWidget {
           ),
 
           const Spacer(),
-          
+
           if (true) ...[
-             Container(
+            Container(
               margin: const EdgeInsets.symmetric(vertical: 12.0),
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
               decoration: BoxDecoration(
@@ -932,7 +926,11 @@ class _DewPointCard extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _buildMinMax("Min", minVal),
-                      Container(width: 1, height: 24, color: const Color(0xFFCBD5E1)), // Vertical divider
+                      Container(
+                        width: 1,
+                        height: 24,
+                        color: const Color(0xFFCBD5E1),
+                      ), // Vertical divider
                       _buildMinMax("Max", maxVal),
                     ],
                   ),

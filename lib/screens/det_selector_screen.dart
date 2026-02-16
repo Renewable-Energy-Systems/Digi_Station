@@ -57,11 +57,11 @@ class DetSelectorScreen extends StatefulWidget {
   final VoidCallback? onDetChanged; // Added callback
 
   const DetSelectorScreen({
-    Key? key,
+    super.key,
     required this.apiHost,
     this.channel,
     this.onDetChanged, // Added to constructor
-  }) : super(key: key);
+  });
 
   @override
   State<DetSelectorScreen> createState() => _DetSelectorScreenState();
@@ -74,20 +74,21 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
 
   // ... (controllers remain same)
 
-// ...
+  // ...
 
-  void _onDetChanged(String? col) async { // Made async
+  void _onDetChanged(String? col) async {
+    // Made async
     setState(() => selectedDet = col);
-    
+
     // Save immediately to prefs
     if (col != null) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_det_column', col);
-      
+
       // Notify parent to refresh Home Screen
       widget.onDetChanged?.call();
     }
-    
+
     _loadSensorInfoFor(col);
   }
 
@@ -230,7 +231,7 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
         json.encode({'action': 'sensorinfo_local_saved', 'param': param}),
       );
     } catch (_) {}
-    
+
     // Notify Home Screen immediately
     widget.onDetChanged?.call();
 
@@ -242,8 +243,6 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
     }
   }
 
-
-
   Future<void> _forceLoadFromDb() async {
     final col = selectedDet;
     if (col == null) return;
@@ -254,77 +253,82 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
       if (param == null) return;
 
       // 1. Fetch from Server
-      final master = await fetchSensorInfoFromServerByParam(widget.apiHost, param);
-      
+      final master = await fetchSensorInfoFromServerByParam(
+        widget.apiHost,
+        param,
+      );
+
       if (master != null) {
-         // Helper to strip date
-         String stripDate(dynamic v) {
-            if (v == null) return '';
-            final s = v.toString();
-            final idx = s.indexOf('T');
-            return idx > 0 ? s.substring(0, idx) : s;
-         }
+        // Helper to strip date
+        String stripDate(dynamic v) {
+          if (v == null) return '';
+          final s = v.toString();
+          final idx = s.indexOf('T');
+          return idx > 0 ? s.substring(0, idx) : s;
+        }
 
-         // 2. Prepare data for local save (overwrite)
-         final Map<String, String> newData = {
-            'workstation': master['ChannelName']?.toString() ?? '',
-            'probeId': master['SenID']?.toString() ?? '',
-            'calibrationDate': stripDate(master['Cali.Date']),
-            'calibrationDue': stripDate(master['Cali.Due']),
-            'min': master['Min']?.toString() ?? '',
-            'max': master['Max']?.toString() ?? '',
-         };
+        // 2. Prepare data for local save (overwrite)
+        final Map<String, String> newData = {
+          'workstation': master['ChannelName']?.toString() ?? '',
+          'probeId': master['SenID']?.toString() ?? '',
+          'calibrationDate': stripDate(master['Cali.Date']),
+          'calibrationDue': stripDate(master['Cali.Due']),
+          'min': master['Min']?.toString() ?? '',
+          'max': master['Max']?.toString() ?? '',
+        };
 
-         // 3. Overwrite local storage
-         await saveLocalSensorInfo(param, newData);
+        // 3. Overwrite local storage
+        await saveLocalSensorInfo(param, newData);
 
-         // 4. Update UI (Controllers)
-         _workstationCtrl.text = newData['workstation']!;
-         _probeCtrl.text = newData['probeId']!;
-         _calDateCtrl.text = newData['calibrationDate']!;
-         _calDueCtrl.text = newData['calibrationDue']!;
-         _minCtrl.text = newData['min']!;
-         _maxCtrl.text = newData['max']!;
-         
-         // 5. Notify Home Screen
-         widget.onDetChanged?.call();
+        // 4. Update UI (Controllers)
+        _workstationCtrl.text = newData['workstation']!;
+        _probeCtrl.text = newData['probeId']!;
+        _calDateCtrl.text = newData['calibrationDate']!;
+        _calDueCtrl.text = newData['calibrationDue']!;
+        _minCtrl.text = newData['min']!;
+        _maxCtrl.text = newData['max']!;
 
-         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(content: Text('Restored from Server & Saved Locally')),
-           );
-         }
+        // 5. Notify Home Screen
+        widget.onDetChanged?.call();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Restored from Server & Saved Locally'),
+            ),
+          );
+        }
       } else {
-         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(content: Text('Could not fetch from server')),
-           );
-         }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not fetch from server')),
+          );
+        }
       }
     } catch (e) {
       print('_forceLoadFromDb error: $e');
       if (mounted) {
-         ScaffoldMessenger.of(context).showSnackBar(
-           SnackBar(content: Text('Error: $e')),
-         );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => loadingSensor = false);
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Select DET & Sensor Info'),
-        automaticallyImplyLeading: false, // hide default back button too if they rely on keys, or just remove explicit leading
+        automaticallyImplyLeading:
+            false, // hide default back button too if they rely on keys, or just remove explicit leading
       ),
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
-        behavior: HitTestBehavior.translucent, // Ensure taps on empty space are caught
+        behavior: HitTestBehavior
+            .translucent, // Ensure taps on empty space are caught
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -335,7 +339,8 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
                 onChanged: _onDetChanged,
                 onSensorInfo: (map) {
                   if (map != null) {
-                    _workstationCtrl.text = map['ChannelName']?.toString() ?? '';
+                    _workstationCtrl.text =
+                        map['ChannelName']?.toString() ?? '';
                     _probeCtrl.text = map['SenID']?.toString() ?? '';
 
                     String stripDate(dynamic v) {
@@ -367,7 +372,9 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _probeCtrl,
-                        decoration: const InputDecoration(labelText: 'Probe ID'),
+                        decoration: const InputDecoration(
+                          labelText: 'Probe ID',
+                        ),
                       ),
                       const SizedBox(height: 12),
                       // Calibration Date (read-only; opens date picker)

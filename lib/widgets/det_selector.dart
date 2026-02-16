@@ -12,12 +12,12 @@ class DetSelector extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>?>? onSensorInfo;
 
   const DetSelector({
-    Key? key,
+    super.key,
     required this.apiHost,
     this.wsChannel,
     this.onChanged,
     this.onSensorInfo,
-  }) : super(key: key);
+  });
 
   @override
   State<DetSelector> createState() => _DetSelectorState();
@@ -82,8 +82,9 @@ class _DetSelectorState extends State<DetSelector> {
   Future<List<String>> _fetchColumns() async {
     final url = Uri.parse('${widget.apiHost}/api/columns');
     final resp = await http.get(url).timeout(const Duration(seconds: 6));
-    if (resp.statusCode != 200)
+    if (resp.statusCode != 200) {
       throw Exception('Columns HTTP ${resp.statusCode}');
+    }
     final j = json.decode(resp.body);
     if (j is Map && j['availableColumns'] is List) {
       return (j['availableColumns'] as List).map((e) => e.toString()).toList();

@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import '../models/work_instruction.dart';
 import '../widgets/wi_card.dart';
 import 'video_player_screen.dart';
-import 'gauge_screen.dart'; // Import the gauge screen
+// Import the gauge screen
 import '../services/config_service.dart';
 
 import '../constants/work_instructions.dart'; // Import constants
 
 class WIListScreen extends StatefulWidget {
-  const WIListScreen({super.key});
+  final VoidCallback? onNavigateToSettings;
+
+  const WIListScreen({super.key, this.onNavigateToSettings});
 
   @override
   State<WIListScreen> createState() => _WIListScreenState();
@@ -35,7 +37,7 @@ class _WIListScreenState extends State<WIListScreen> {
       // Using master list from shared constants
       final all = WorkInstructionsConstants.allWis;
       final filtered = all.where((wi) => enabledIds.contains(wi.id)).toList();
-      
+
       if (mounted) {
         setState(() {
           _currentWis = filtered;
@@ -43,10 +45,10 @@ class _WIListScreenState extends State<WIListScreen> {
         });
       }
     } else {
-      // 3. Fallback: Show ALL videos if nothing configured
+      // 3. Fallback: Show empty list (user must configure)
       if (mounted) {
         setState(() {
-          _currentWis = WorkInstructionsConstants.allWis;
+          _currentWis = [];
           _isLoading = false;
         });
       }
@@ -69,7 +71,24 @@ class _WIListScreenState extends State<WIListScreen> {
         elevation: 0,
       ),
       body: _currentWis.isEmpty
-          ? const Center(child: Text('No videos configured for this Workstation ID. \nCheck Settings -> Workstation Configuration'))
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'No videos configured for this Workstation ID.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: widget.onNavigateToSettings,
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Configure Videos in Settings'),
+                  ),
+                ],
+              ),
+            )
           : ListView.builder(
               itemCount: _currentWis.length,
               itemBuilder: (context, index) {

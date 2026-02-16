@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import '../services/config_service.dart';
 import '../services/update_service.dart';
+import '../services/screen_config_service.dart'; // Import new service
 import 'package:ota_update/ota_update.dart';
-import '../constants/work_instructions.dart'; // Import constants
+import '../constants/work_instructions.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final VoidCallback? onSettingsChanged;
+
+  const SettingsScreen({super.key, this.onSettingsChanged});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -16,14 +19,21 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final ConfigService _configService = ConfigService();
   final UpdateService _updateService = UpdateService();
+  final ScreenConfigService _screenConfigService =
+      ScreenConfigService(); // Service instance
+
   String? _selectedMachine;
   bool _isLoading = true;
   bool _isCheckingUpdate = false;
   String _updateStatus = '';
   String _appVersion = '';
 
-  final TextEditingController _workstationIdController = TextEditingController();
-  final List<String> _selectedVideoIds = []; // Track selected videos
+  final TextEditingController _workstationIdController =
+      TextEditingController();
+  final List<String> _selectedVideoIds = [];
+
+  // Screen Visibility State
+  List<AppScreen> _enabledScreens = [];
 
   @override
   void initState() {
@@ -42,13 +52,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final workstationId = await _configService.getWorkstationId();
     final savedVideoIds = await _configService.getEnabledVideoIds();
     final packageInfo = await PackageInfo.fromPlatform();
-    
+    final enabledScreens = await _screenConfigService
+        .getEnabledScreens(); // Load screens
+
     if (mounted) {
       setState(() {
         _selectedMachine = machine;
         _workstationIdController.text = workstationId ?? '';
         _selectedVideoIds.clear();
         _selectedVideoIds.addAll(savedVideoIds);
+        _enabledScreens = enabledScreens;
         _appVersion = packageInfo.version;
         _isLoading = false;
       });
@@ -59,17 +72,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _configService.saveEnabledVideoIds(_selectedVideoIds);
   }
 
+  Future<void> _toggleScreen(AppScreen screen, bool enabled) async {
+    final newScreens = List<AppScreen>.from(
+      _enabledScreens,
+    ); // Create a mutable copy to avoid reference issues
+
+    if (enabled) {
+      if (!newScreens.contains(screen)) {
+        newScreens.add(screen);
+      }
+    } else {
+      newScreens.remove(screen);
+    }
+
+    setState(() {
+      _enabledScreens = newScreens;
+    });
+
+    await _screenConfigService.saveEnabledScreens(_enabledScreens);
+
+    // Notify parent to refresh
+    widget.onSettingsChanged?.call();
+  }
+
   Future<void> _saveSettings(String? newValue) async {
     if (newValue != null) {
       setState(() {
         _selectedMachine = newValue;
       });
       await _configService.saveMachineType(newValue);
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Saved as $newValue.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Saved as $newValue.')));
       }
     }
   }
@@ -78,9 +114,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final id = _workstationIdController.text.trim();
     await _configService.saveWorkstationId(id);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Workstation ID saved as "$id"')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Workstation ID saved as "$id"')));
     }
   }
 
@@ -104,9 +140,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else if (info != null && info.containsKey('error')) {
       _showErrorDialog(info['error']);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('App is up to date!')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('App is up to date!')));
     }
   }
 
@@ -121,7 +157,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Text('Version ${info['latestVersion']} is available.'),
             const SizedBox(height: 8),
-            const Text('Release Notes:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Release Notes:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             Container(
               constraints: const BoxConstraints(maxHeight: 150),
               child: SingleChildScrollView(
@@ -177,25 +216,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return _UpdateProgressDialog(
           stream: _updateService.runUpdate(apkUrl),
           onDone: () {
-             Navigator.pop(ctx); // Close dialog
-             setState(() { _isCheckingUpdate = false; _updateStatus = ''; });
+            Navigator.pop(ctx); // Close dialog
+            setState(() {
+              _isCheckingUpdate = false;
+              _updateStatus = '';
+            });
           },
         );
       },
     );
   }
 
+  // Helper to map enum to friendly name
+  String _getScreenName(AppScreen s) {
+    switch (s) {
+      case AppScreen.webLogs:
+        return 'Web Logs (Left)';
+      case AppScreen.home:
+        return 'Home Screen';
+      case AppScreen.wiList:
+        return 'Work Instructions (Right)';
+      case AppScreen.gauge:
+        return 'Gauge Screen (Right+)';
+      case AppScreen.detSelector:
+        return 'DET Selector (Right++)';
+      case AppScreen.settings:
+        return 'Settings (Right+++)';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                // Screen Visibility Selection
+                const Text(
+                  'Screen Visibility',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: Column(
+                    children: AppScreen.values.map((screen) {
+                      // Hide mandatory screens (Settings) - Home is now toggleable
+                      if (screen == AppScreen.settings)
+                        return const SizedBox.shrink();
+
+                      final isEnabled = _enabledScreens.contains(screen);
+                      return SwitchListTile(
+                        title: Text(_getScreenName(screen)),
+                        value: isEnabled,
+                        onChanged: (val) => _toggleScreen(screen, val),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
                 const Text(
                   'Select Machine Configuration',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -287,7 +369,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                
+
                 // Update Section
                 Card(
                   child: Padding(
@@ -297,24 +379,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         const Text(
                           'App Updates',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 8),
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: const Text('Current Version'),
-                          subtitle: Text(_appVersion.isNotEmpty ? _appVersion : 'Unknown'),
+                          subtitle: Text(
+                            _appVersion.isNotEmpty ? _appVersion : 'Unknown',
+                          ),
                           trailing: _isCheckingUpdate
-                              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : ElevatedButton(
                                   onPressed: _handleCheckForUpdates,
                                   child: const Text('Check for Updates'),
                                 ),
                         ),
                         if (_updateStatus.isNotEmpty && !_isCheckingUpdate)
-                           Padding(
+                          Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text(_updateStatus, style: const TextStyle(color: Colors.red)),
+                            child: Text(
+                              _updateStatus,
+                              style: const TextStyle(color: Colors.red),
+                            ),
                           ),
                       ],
                     ),
@@ -330,7 +426,7 @@ class _UpdateProgressDialog extends StatelessWidget {
   final Stream<OtaEvent> stream;
   final VoidCallback onDone;
 
-  const _UpdateProgressDialog({super.key, required this.stream, required this.onDone});
+  const _UpdateProgressDialog({required this.stream, required this.onDone});
 
   @override
   Widget build(BuildContext context) {
@@ -346,18 +442,21 @@ class _UpdateProgressDialog extends StatelessWidget {
           final event = snapshot.data!;
           status = "${event.status} ${event.value ?? ''}";
           if (event.status == OtaStatus.DOWNLOADING) {
-             progress = (int.tryParse(event.value ?? '0') ?? 0) / 100.0;
+            progress = (int.tryParse(event.value ?? '0') ?? 0) / 100.0;
           }
           if (event.status == OtaStatus.INSTALLING) {
-             progress = null; // indeterminate
-             status = "Installing...";
+            progress = null; // indeterminate
+            status = "Installing...";
           }
         }
-        
+
         // Allow closing if stream is done or error occurred
-        bool isDone = snapshot.connectionState == ConnectionState.done || snapshot.hasError;
-        if (snapshot.hasData && snapshot.data!.status.toString().contains('ERROR')) {
-           isDone = true;
+        bool isDone =
+            snapshot.connectionState == ConnectionState.done ||
+            snapshot.hasError;
+        if (snapshot.hasData &&
+            snapshot.data!.status.toString().contains('ERROR')) {
+          isDone = true;
         }
 
         return PopScope(
@@ -370,13 +469,12 @@ class _UpdateProgressDialog extends StatelessWidget {
                 Text(status),
                 const SizedBox(height: 10),
                 // Hide progress bar if done
-                if (!isDone)
-                  LinearProgressIndicator(value: progress),
+                if (!isDone) LinearProgressIndicator(value: progress),
               ],
             ),
             actions: [
-               if (isDone)
-                 TextButton(onPressed: onDone, child: const Text('Close'))
+              if (isDone)
+                TextButton(onPressed: onDone, child: const Text('Close')),
             ],
           ),
         );

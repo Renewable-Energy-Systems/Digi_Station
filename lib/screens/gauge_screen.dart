@@ -19,23 +19,24 @@ class GaugeScreen extends StatefulWidget {
   State<GaugeScreen> createState() => _GaugeScreenState();
 }
 
-class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClientMixin {
+class _GaugeScreenState extends State<GaugeScreen>
+    with AutomaticKeepAliveClientMixin {
   String _thicknessValue = "--.---";
   String _weightValue = "--.--";
   bool isConnected = false;
   StreamSubscription? _gaugeSub;
   String _machineName = "Unknown";
   String _machineIp = "";
-  
+
   // Pi Health
   String _piTempValue = "--";
   bool? _piThrottled;
 
   // WebSocket channel for DET selector & updates
   WebSocketChannel? _detChannel;
-  final String detWsUrl = ApiConstants.detWsUrl; 
-  final String apiHost = ApiConstants.detApiHost; 
-  
+  final String detWsUrl = ApiConstants.detWsUrl;
+  final String apiHost = ApiConstants.detApiHost;
+
   bool _updateAvailable = false;
 
   // Range Settings (Machine Specific)
@@ -57,38 +58,40 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
 
     // 1) Subscribe to connection status
     SocketService().connectionStatus.listen((status) {
-       if (mounted) {
-         setState(() {
-           isConnected = status;
-         });
-       }
+      if (mounted) {
+        setState(() {
+          isConnected = status;
+        });
+      }
     });
 
     // 2) existing gauge data subscription
     _gaugeSub = SocketService().gaugeStream.listen((data) {
       print("Received Data: $data"); // Debug log within the app logic
-      
+
       if (mounted) {
         setState(() {
           if (data.containsKey('height')) {
             _thicknessValue = data['height'].toString();
-          } 
+          }
           if (data.containsKey('weight')) {
             _weightValue = data['weight'].toString();
           }
           if (data.containsKey('pi_temp')) {
-             final t = data['pi_temp'];
-             _piTempValue = (t != null) ? t.toString() : "--";
+            final t = data['pi_temp'];
+            _piTempValue = (t != null) ? t.toString() : "--";
           }
           if (data.containsKey('pi_throttled')) {
             _piThrottled = data['pi_throttled'];
           }
-           // Fallback for generic 'value' - assume thickness if ambiguous, or ignore? 
-           // User context implies height/weight specific. I'll map value to thickness for backward compat if needed, but logs show specific keys.
-           if (data.containsKey('value') && !data.containsKey('height') && !data.containsKey('weight')) {
-             _thicknessValue = data['value'].toString();
-           }
-           _checkAlerts(); // visual/audio check on every update
+          // Fallback for generic 'value' - assume thickness if ambiguous, or ignore?
+          // User context implies height/weight specific. I'll map value to thickness for backward compat if needed, but logs show specific keys.
+          if (data.containsKey('value') &&
+              !data.containsKey('height') &&
+              !data.containsKey('weight')) {
+            _thicknessValue = data['value'].toString();
+          }
+          _checkAlerts(); // visual/audio check on every update
         });
       }
     });
@@ -100,8 +103,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     try {
       _detChannel = IOWebSocketChannel.connect(detWsUrl);
       _detChannel!.stream.listen(
-        (msg) {
-        },
+        (msg) {},
         onError: (err) {
           debugPrint('DET WS error: $err');
         },
@@ -109,9 +111,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
           debugPrint('DET WS closed');
         },
       );
-    } catch (_) { // Add catch block
-       // ignore or log
-       _detChannel = null;
+    } catch (_) {
+      // Add catch block
+      // ignore or log
+      _detChannel = null;
     }
   }
 
@@ -138,7 +141,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     final url = await ConfigService().getBaseUrl();
     if (url == null) {
       // If no URL selected, ensure disconnected and UI shows 'Select'
-      SocketService().disconnect(); 
+      SocketService().disconnect();
       setState(() {
         _machineIp = "";
         isConnected = false;
@@ -179,7 +182,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
           children: [
             Text(
               _machineName,
-              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
             ),
             if (_machineIp.isNotEmpty)
               Text(
@@ -194,60 +200,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.tune, color: Colors.blueGrey),
-                  tooltip: "Range Settings",
-                  onPressed: _showRangeSettings,
-                ),
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: () async {
-                await Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                );
-                // Sync back if changed in settings
-                _loadConfig();
-                _connectSocket();
-                _checkUpdate(); // Re-check after settings
-              },
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                      border: Border.all(color: Colors.grey.withOpacity(0.1)),
-                    ),
-                    child: const Icon(Icons.settings, color: Colors.blueGrey, size: 24),
-                  ),
-                  if (_updateAvailable)
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-                ),
-              ],
+            child: IconButton(
+              icon: const Icon(Icons.tune, color: Colors.blueGrey),
+              tooltip: "Range Settings",
+              onPressed: _showRangeSettings,
             ),
           ),
         ],
@@ -259,19 +215,29 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
             children: [
               // Connection Status Card
               Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 10,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
-                  color: isConnected ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
+                  color: isConnected
+                      ? const Color(0xFFE8F5E9)
+                      : const Color(0xFFFFEBEE),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isConnected ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+                    color: isConnected
+                        ? Colors.green.withOpacity(0.3)
+                        : Colors.red.withOpacity(0.3),
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                     Icon(
+                    Icon(
                       isConnected ? Icons.wifi : Icons.wifi_off,
                       color: isConnected ? Colors.green[700] : Colors.red[700],
                     ),
@@ -280,10 +246,14 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          isConnected ? "Connected to $_machineName" : "Connecting to $_machineName...",
+                          isConnected
+                              ? "Connected to $_machineName"
+                              : "Connecting to $_machineName...",
                           style: TextStyle(
                             fontSize: 14,
-                            color: isConnected ? Colors.green[900] : Colors.red[900],
+                            color: isConnected
+                                ? Colors.green[900]
+                                : Colors.red[900],
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -292,7 +262,9 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                             _machineIp,
                             style: TextStyle(
                               fontSize: 12,
-                              color: isConnected ? Colors.green[700] : Colors.red[700],
+                              color: isConnected
+                                  ? Colors.green[700]
+                                  : Colors.red[700],
                             ),
                           ),
                       ],
@@ -331,7 +303,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                 statusText: _getTempStatus(),
                 statusColor: _getTempColor(),
               ),
-              
+
               const SizedBox(height: 40),
             ],
           ),
@@ -412,7 +384,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
                 color: statusColor,
               ),
             ),
-          ]
+          ],
         ],
       ),
     );
@@ -433,10 +405,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     double? max2,
   }) {
     Color getColor(String val, Color def, double? min, double? max) {
-       final v = double.tryParse(val);
-       if (v == null || min == null || max == null) return def;
-       if (v >= min && v <= max) return Colors.green;
-       return Colors.red;
+      final v = double.tryParse(val);
+      if (v == null || min == null || max == null) return def;
+      if (v >= min && v <= max) return Colors.green;
+      return Colors.red;
     }
 
     return Container(
@@ -456,19 +428,34 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
       ),
       child: Row(
         children: [
-          Expanded(child: _buildValueColumn(title1, value1, unit1, getColor(value1, defaultColor1, min1, max1))),
-          Container(
-            width: 1, 
-            height: 80, 
-            color: Colors.grey.withOpacity(0.2),
+          Expanded(
+            child: _buildValueColumn(
+              title1,
+              value1,
+              unit1,
+              getColor(value1, defaultColor1, min1, max1),
+            ),
           ),
-          Expanded(child: _buildValueColumn(title2, value2, unit2, getColor(value2, defaultColor2, min2, max2))),
+          Container(width: 1, height: 80, color: Colors.grey.withOpacity(0.2)),
+          Expanded(
+            child: _buildValueColumn(
+              title2,
+              value2,
+              unit2,
+              getColor(value2, defaultColor2, min2, max2),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildValueColumn(String title, String value, String unit, Color color) {
+  Widget _buildValueColumn(
+    String title,
+    String value,
+    String unit,
+    Color color,
+  ) {
     return Column(
       children: [
         Text(
@@ -513,28 +500,29 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
   }
 
   Color _getTempColor() {
-     if (_piThrottled == true) return Colors.red;
-     final t = double.tryParse(_piTempValue);
-     if (t == null) return Colors.black;
-     if (t >= 80) return Colors.red;
-     if (t >= 70) return Colors.orange;
-     if (t >= 60) return const Color(0xFFB58900); // darkish yellow
-     return Colors.green;
+    if (_piThrottled == true) return Colors.red;
+    final t = double.tryParse(_piTempValue);
+    if (t == null) return Colors.black;
+    if (t >= 80) return Colors.red;
+    if (t >= 70) return Colors.orange;
+    if (t >= 60) return const Color(0xFFB58900); // darkish yellow
+    return Colors.green;
   }
 
   String? _getTempStatus() {
-     if (_piThrottled == true) return "THROTTLING!";
-     final t = double.tryParse(_piTempValue);
-     if (t == null) return null;
-     if (t >= 80) return "OVERHEAT";
-     if (t >= 70) return "HOT";
-     if (t >= 60) return "WARM";
-     return "OK";
+    if (_piThrottled == true) return "THROTTLING!";
+    final t = double.tryParse(_piTempValue);
+    if (t == null) return null;
+    if (t >= 80) return "OVERHEAT";
+    if (t >= 70) return "HOT";
+    if (t >= 60) return "WARM";
+    return "OK";
   }
+
   Future<void> _loadRanges() async {
     final prefs = await SharedPreferences.getInstance();
     // Use machine name in key for specificity
-    final p = "gauge_range_${_machineName}_"; 
+    final p = "gauge_range_${_machineName}_";
     setState(() {
       _minThickness = prefs.getDouble('${p}minThickness');
       _maxThickness = prefs.getDouble('${p}maxThickness');
@@ -543,22 +531,47 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
     });
   }
 
-  Future<void> _saveRanges(double? minT, double? maxT, double? minW, double? maxW) async {
+  Future<void> _saveRanges(
+    double? minT,
+    double? maxT,
+    double? minW,
+    double? maxW,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     final p = "gauge_range_${_machineName}_";
-    
-    if (minT != null) await prefs.setDouble('${p}minThickness', minT); else await prefs.remove('${p}minThickness');
-    if (maxT != null) await prefs.setDouble('${p}maxThickness', maxT); else await prefs.remove('${p}maxThickness');
-    if (minW != null) await prefs.setDouble('${p}minWeight', minW); else await prefs.remove('${p}minWeight');
-    if (maxW != null) await prefs.setDouble('${p}maxWeight', maxW); else await prefs.remove('${p}maxWeight');
+
+    if (minT != null) {
+      await prefs.setDouble('${p}minThickness', minT);
+    } else {
+      await prefs.remove('${p}minThickness');
+    }
+    if (maxT != null) {
+      await prefs.setDouble('${p}maxThickness', maxT);
+    } else {
+      await prefs.remove('${p}maxThickness');
+    }
+    if (minW != null) {
+      await prefs.setDouble('${p}minWeight', minW);
+    } else {
+      await prefs.remove('${p}minWeight');
+    }
+    if (maxW != null) {
+      await prefs.setDouble('${p}maxWeight', maxW);
+    } else {
+      await prefs.remove('${p}maxWeight');
+    }
 
     // Reload to apply immediately
     await _loadRanges();
   }
 
   void _showRangeSettings() {
-    final minTCtrl = TextEditingController(text: _minThickness?.toString() ?? '');
-    final maxTCtrl = TextEditingController(text: _maxThickness?.toString() ?? '');
+    final minTCtrl = TextEditingController(
+      text: _minThickness?.toString() ?? '',
+    );
+    final maxTCtrl = TextEditingController(
+      text: _maxThickness?.toString() ?? '',
+    );
     final minWCtrl = TextEditingController(text: _minWeight?.toString() ?? '');
     final maxWCtrl = TextEditingController(text: _maxWeight?.toString() ?? '');
 
@@ -570,40 +583,73 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Thickness Range (mm)', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                'Thickness Range (mm)',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               Row(
                 children: [
-                   Expanded(child: TextField(controller: minTCtrl, decoration: const InputDecoration(labelText: 'Min'), keyboardType: TextInputType.number)),
-                   const SizedBox(width: 10),
-                   Expanded(child: TextField(controller: maxTCtrl, decoration: const InputDecoration(labelText: 'Max'), keyboardType: TextInputType.number)),
+                  Expanded(
+                    child: TextField(
+                      controller: minTCtrl,
+                      decoration: const InputDecoration(labelText: 'Min'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: maxTCtrl,
+                      decoration: const InputDecoration(labelText: 'Max'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 20),
-              const Text('Weight Range (g)', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                'Weight Range (g)',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               Row(
                 children: [
-                   Expanded(child: TextField(controller: minWCtrl, decoration: const InputDecoration(labelText: 'Min'), keyboardType: TextInputType.number)),
-                   const SizedBox(width: 10),
-                   Expanded(child: TextField(controller: maxWCtrl, decoration: const InputDecoration(labelText: 'Max'), keyboardType: TextInputType.number)),
+                  Expanded(
+                    child: TextField(
+                      controller: minWCtrl,
+                      decoration: const InputDecoration(labelText: 'Min'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: maxWCtrl,
+                      decoration: const InputDecoration(labelText: 'Max'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () {
-               _saveRanges(
-                 double.tryParse(minTCtrl.text),
-                 double.tryParse(maxTCtrl.text),
-                 double.tryParse(minWCtrl.text),
-                 double.tryParse(maxWCtrl.text),
-               );
-               Navigator.pop(ctx);
+              _saveRanges(
+                double.tryParse(minTCtrl.text),
+                double.tryParse(maxTCtrl.text),
+                double.tryParse(minWCtrl.text),
+                double.tryParse(maxWCtrl.text),
+              );
+              Navigator.pop(ctx);
             },
             child: const Text('Save'),
-          )
+          ),
         ],
       ),
     );
@@ -611,7 +657,7 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
 
   void _checkAlerts() {
     bool alert = false;
-    
+
     // Check Thickness
     final t = double.tryParse(_thicknessValue);
     if (t != null && _minThickness != null && _maxThickness != null) {
@@ -626,9 +672,10 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
 
     if (alert) {
       final now = DateTime.now();
-      if (_lastAlertTime == null || now.difference(_lastAlertTime!) > _alertDebounce) {
-         _lastAlertTime = now;
-         _playAlertSound();
+      if (_lastAlertTime == null ||
+          now.difference(_lastAlertTime!) > _alertDebounce) {
+        _lastAlertTime = now;
+        _playAlertSound();
       }
     }
   }
@@ -638,24 +685,28 @@ class _GaugeScreenState extends State<GaugeScreen> with AutomaticKeepAliveClient
       // release mode often requires asset source defined in pubspec
       // For now we use a built-in player or a simple beep if possible.
       // Since we added audioplayers, let's try to play a default 'beep' or just error tone.
-      // NOTE: User might need to add a sound file to assets. 
+      // NOTE: User might need to add a sound file to assets.
       // For this step, I will try to play a sourced file or just log if missing.
-      // But typically we need a file. 
-      // Strategy: Since I can't easily add a file to assets physically, 
-      // I will assume there might be one or use a URL for testing? 
+      // But typically we need a file.
+      // Strategy: Since I can't easily add a file to assets physically,
+      // I will assume there might be one or use a URL for testing?
       // Actually, 'audioplayers' can play from generated bytes but that's complex.
       // Let's assume we proceed without a file and just log "BEEP" unless user provides one.
       // Wait, I can try SourceUrl if device has internet, but that's flaky.
       // Better: I'll try to find a system sound or just leave the placeholder for the user to add 'assets/alert.mp3'.
-      
+
       // Attempting to play a generic error sound if available or just log.
-      // print("BEEP! BEEP!"); 
-      
+      // print("BEEP! BEEP!");
+
       // Provide a concrete implementation assuming 'assets/alert.mp3' exists or will exist.
       // Or use a URL for a simple beep test.
       // await _audioPlayer.play(UrlSource('https://actions.google.com/sounds/v1/alarms/beep_short.ogg'));
       // The user wants a sound. I'll use a public reliable URL for now.
-      await _audioPlayer.play(UrlSource('https://codeskulptor-demos.commondatastorage.googleapis.com/GalaxyInvaders/pause.mp3')); 
+      await _audioPlayer.play(
+        UrlSource(
+          'https://codeskulptor-demos.commondatastorage.googleapis.com/GalaxyInvaders/pause.mp3',
+        ),
+      );
     } catch (e) {
       print('Audio error: $e');
     }

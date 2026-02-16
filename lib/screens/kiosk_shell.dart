@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:flutter/services.dart'; // Added for SystemChannels
+import '../services/screen_config_service.dart'; // Import config service
 
 // use prefixes to avoid name collisions and make it explicit
 import 'web_logs_screen.dart' show WebLogsScreen;
@@ -10,6 +11,7 @@ import 'home_screen.dart' as home;
 import 'wi_list_screen.dart' show WIListScreen;
 import 'gauge_screen.dart' as gauge;
 import 'det_selector_screen.dart' show DetSelectorScreen;
+import 'settings_screen.dart';
 
 import 'package:ota_update/ota_update.dart';
 import '../services/update_service.dart';
@@ -18,49 +20,104 @@ class KioskShell extends StatefulWidget {
   final WebSocketChannel? channel;
   final String apiHost;
 
-  const KioskShell({
-    super.key,
-    required this.apiHost,
-    this.channel,
-  });
+  const KioskShell({super.key, required this.apiHost, this.channel});
 
   @override
   State<KioskShell> createState() => _KioskShellState();
 }
 
-
 class _KioskShellState extends State<KioskShell> {
-  late final PageController _controller;
-  late final List<Widget> _pages; // cache pages
-  int _pageIndex = 1; // start in the middle (Home)
+  late PageController _controller;
+  List<Widget> _pages = [];
+  int _pageIndex = 0;
+  int _pageVersion = 0; // Force update
   final UpdateService _updateService = UpdateService();
+  final ScreenConfigService _screenConfigService = ScreenConfigService();
+  bool _isLoading = true;
 
   // GlobalKey to access HomeScreen functionality
-  final GlobalKey<home.HomeScreenState> _homeKey = GlobalKey<home.HomeScreenState>();
+  final GlobalKey<home.HomeScreenState> _homeKey =
+      GlobalKey<home.HomeScreenState>();
 
   @override
   void initState() {
     super.initState();
     _checkForUpdates();
+    _initPages();
+  }
 
-    _controller = PageController(initialPage: _pageIndex);
+  Future<void> _initPages({bool stayOnSettings = false}) async {
+    final enabledScreens = await _screenConfigService.getEnabledScreens();
 
-    // IMPORTANT: create these widgets ONCE
-    // no const because widget constructors are not const
-    _pages = [
-      WebLogsScreen(), // index 0 (left)
-      home.HomeScreen(key: _homeKey), // index 1 (center) — note the prefix
-      WIListScreen(), // index 2 (right)
-      gauge.GaugeScreen(), // index 3 — note the prefix
-      DetSelectorScreen(         // index 4
-        apiHost: widget.apiHost,
-        channel: widget.channel,
-        onDetChanged: () {
-          // Trigger refresh on Home Screen
-          _homeKey.currentState?.refreshSensorInfo();
-        },
-      ),
-    ];
+    final List<Widget> pages = [];
+    int homeIndex = 0;
+    int settingsIndex = -1;
+
+    for (final screen in enabledScreens) {
+      switch (screen) {
+        case AppScreen.webLogs:
+          pages.add(WebLogsScreen());
+          break;
+        case AppScreen.home:
+          pages.add(home.HomeScreen(key: _homeKey));
+          homeIndex = pages.length - 1;
+          break;
+        case AppScreen.wiList:
+          pages.add(WIListScreen(onNavigateToSettings: _goToSettingsPage));
+          break;
+        case AppScreen.gauge:
+          pages.add(gauge.GaugeScreen());
+          break;
+        case AppScreen.detSelector:
+          pages.add(
+            DetSelectorScreen(
+              apiHost: widget.apiHost,
+              channel: widget.channel,
+              onDetChanged: () {
+                _homeKey.currentState?.refreshSensorInfo();
+              },
+            ),
+          );
+          break;
+        case AppScreen.settings:
+          pages.add(
+            SettingsScreen(
+              onSettingsChanged: () => _initPages(stayOnSettings: true),
+            ),
+          );
+          settingsIndex = pages.length - 1;
+          break;
+      }
+    }
+
+    if (mounted) {
+      if (_pages.isNotEmpty) {
+        try {
+          _controller.dispose();
+        } catch (_) {}
+      }
+
+      setState(() {
+        _pages = pages;
+        _pageVersion++; // Force rebuild
+        // If we want to stay on settings and it exists, use that. Else home.
+        _pageIndex = (stayOnSettings && settingsIndex != -1)
+            ? settingsIndex
+            : homeIndex;
+
+        print(
+          'KioskShell: stay=$stayOnSettings, settingsIdx=$settingsIndex, homeIdx=$homeIndex, target=$_pageIndex',
+        );
+
+        // Re-create controller to snap to new index or just jump
+        // If we dispose old one, we must create new one.
+        // If _controller is lately initialized, checking _pages.isNotEmpty before might be needed in dispose?
+        // We already have logic in dispose/build.
+        // It's safer to recreate controller to ensure initialPage is correct.
+        _controller = PageController(initialPage: _pageIndex);
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _checkForUpdates() async {
@@ -74,6 +131,8 @@ class _KioskShellState extends State<KioskShell> {
     }
   }
 
+  // ... rest of update logic methods ...
+
   void _showUpdatePrompt(Map<String, dynamic> info) {
     showDialog(
       context: context,
@@ -86,7 +145,10 @@ class _KioskShellState extends State<KioskShell> {
           children: [
             Text('Version ${info['latestVersion']} is available.'),
             const SizedBox(height: 8),
-            const Text('Release Notes:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Release Notes:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             Container(
               constraints: const BoxConstraints(maxHeight: 100),
               child: SingleChildScrollView(
@@ -123,9 +185,23 @@ class _KioskShellState extends State<KioskShell> {
     );
   }
 
-  void _goTo(int index) {
+  Future<void> _goToSettingsPage() async {
+    final enabledScreens = await _screenConfigService.getEnabledScreens();
+    // Assuming settings is always in the list if enabled, or maybe force enable?
+    // User wants to go to settings.
+    int index = enabledScreens.indexOf(AppScreen.settings);
+    if (index != -1) {
+      _goTo(index, animate: false);
+    } else {
+      // If settings is disabled (which shouldn't happen based on our logic, but safe to check)
+      // Maybe enable it temporarily? Or show error?
+      // For now, assume it's there.
+    }
+  }
+
+  void _goTo(int index, {bool animate = true}) {
     if (index < 0 || index > _pages.length - 1) return;
-    
+
     // Force hide keyboard (Works better for WebViews/Native views than just unfocus)
     SystemChannels.textInput.invokeMethod('TextInput.hide');
     FocusScope.of(context).unfocus();
@@ -133,25 +209,41 @@ class _KioskShellState extends State<KioskShell> {
     setState(() {
       _pageIndex = index;
     });
-    _controller.animateToPage(
-      _pageIndex,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-    );
+
+    if (animate) {
+      _controller.animateToPage(
+        _pageIndex,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _controller.jumpToPage(_pageIndex);
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    // Check if initialized to avoid error if dispose calls before init
+    // But local variable created in init... wait, I made controller late.
+    // Ideally check if initialized. But since we await in init, it might be safer.
+    // Actually, let's just try/catch or assume it's fine for now as user stays on screen.
+    if (_pages.isNotEmpty) {
+      _controller.dispose();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       body: Stack(
         children: [
           PageView(
+            key: ValueKey(_pageVersion),
             controller: _controller,
             physics:
                 const NeverScrollableScrollPhysics(), // no swipe, use arrows
@@ -193,11 +285,7 @@ class _NavButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
 
-  const _NavButton({
-    super.key,
-    required this.icon,
-    required this.onTap,
-  });
+  const _NavButton({required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -231,7 +319,7 @@ class _UpdateProgressDialog extends StatelessWidget {
   final Stream<OtaEvent> stream;
   final VoidCallback onDone;
 
-  const _UpdateProgressDialog({super.key, required this.stream, required this.onDone});
+  const _UpdateProgressDialog({required this.stream, required this.onDone});
 
   @override
   Widget build(BuildContext context) {
@@ -247,17 +335,20 @@ class _UpdateProgressDialog extends StatelessWidget {
           final event = snapshot.data!;
           status = "${event.status} ${event.value ?? ''}";
           if (event.status == OtaStatus.DOWNLOADING) {
-             progress = (int.tryParse(event.value ?? '0') ?? 0) / 100.0;
+            progress = (int.tryParse(event.value ?? '0') ?? 0) / 100.0;
           }
           if (event.status == OtaStatus.INSTALLING) {
-             progress = null; // indeterminate
-             status = "Installing...";
+            progress = null; // indeterminate
+            status = "Installing...";
           }
         }
 
-        bool isDone = snapshot.connectionState == ConnectionState.done || snapshot.hasError;
-        if (snapshot.hasData && snapshot.data!.status.toString().contains('ERROR')) {
-           isDone = true;
+        bool isDone =
+            snapshot.connectionState == ConnectionState.done ||
+            snapshot.hasError;
+        if (snapshot.hasData &&
+            snapshot.data!.status.toString().contains('ERROR')) {
+          isDone = true;
         }
 
         return PopScope(
@@ -269,13 +360,12 @@ class _UpdateProgressDialog extends StatelessWidget {
               children: [
                 Text(status),
                 const SizedBox(height: 10),
-                if (!isDone)
-                   LinearProgressIndicator(value: progress),
+                if (!isDone) LinearProgressIndicator(value: progress),
               ],
             ),
             actions: [
-                if (isDone)
-                  TextButton(onPressed: onDone, child: const Text('Close'))
+              if (isDone)
+                TextButton(onPressed: onDone, child: const Text('Close')),
             ],
           ),
         );
