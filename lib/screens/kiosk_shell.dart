@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:flutter/services.dart'; // Added for SystemChannels
+
 // use prefixes to avoid name collisions and make it explicit
 import 'web_logs_screen.dart' show WebLogsScreen;
 import 'home_screen.dart' as home;
@@ -123,6 +125,11 @@ class _KioskShellState extends State<KioskShell> {
 
   void _goTo(int index) {
     if (index < 0 || index > _pages.length - 1) return;
+    
+    // Force hide keyboard (Works better for WebViews/Native views than just unfocus)
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    FocusScope.of(context).unfocus();
+
     setState(() {
       _pageIndex = index;
     });

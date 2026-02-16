@@ -322,128 +322,132 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
         title: const Text('Select DET & Sensor Info'),
         automaticallyImplyLeading: false, // hide default back button too if they rely on keys, or just remove explicit leading
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            DetSelector(
-              apiHost: widget.apiHost,
-              wsChannel: widget.channel,
-              onChanged: _onDetChanged,
-              onSensorInfo: (map) {
-                if (map != null) {
-                  _workstationCtrl.text = map['ChannelName']?.toString() ?? '';
-                  _probeCtrl.text = map['SenID']?.toString() ?? '';
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        behavior: HitTestBehavior.translucent, // Ensure taps on empty space are caught
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              DetSelector(
+                apiHost: widget.apiHost,
+                wsChannel: widget.channel,
+                onChanged: _onDetChanged,
+                onSensorInfo: (map) {
+                  if (map != null) {
+                    _workstationCtrl.text = map['ChannelName']?.toString() ?? '';
+                    _probeCtrl.text = map['SenID']?.toString() ?? '';
 
-                  String stripDate(dynamic v) {
-                    if (v == null) return '';
-                    final s = v.toString();
-                    final idx = s.indexOf('T');
-                    return idx > 0 ? s.substring(0, idx) : s;
+                    String stripDate(dynamic v) {
+                      if (v == null) return '';
+                      final s = v.toString();
+                      final idx = s.indexOf('T');
+                      return idx > 0 ? s.substring(0, idx) : s;
+                    }
+
+                    _calDateCtrl.text = stripDate(map['Cali.Date']);
+                    _calDueCtrl.text = stripDate(map['Cali.Due']);
+                    _minCtrl.text = map['Min']?.toString() ?? '';
+                    _maxCtrl.text = map['Max']?.toString() ?? '';
                   }
-
-                  _calDateCtrl.text = stripDate(map['Cali.Date']);
-                  _calDueCtrl.text = stripDate(map['Cali.Due']);
-                  _minCtrl.text = map['Min']?.toString() ?? '';
-                  _maxCtrl.text = map['Max']?.toString() ?? '';
-                }
-              },
-            ),
-            const SizedBox(height: 20),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: _workstationCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Workstation name',
+                },
+              ),
+              const SizedBox(height: 20),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _workstationCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Workstation name',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _probeCtrl,
-                      decoration: const InputDecoration(labelText: 'Probe ID'),
-                    ),
-                    const SizedBox(height: 12),
-                    // Calibration Date (read-only; opens date picker)
-                    InkWell(
-                      onTap: () => _pickDate(_calDateCtrl),
-                      child: IgnorePointer(
-                        child: TextField(
-                          controller: _calDateCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Calibration Date',
-                            suffixIcon: Icon(Icons.calendar_today),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _probeCtrl,
+                        decoration: const InputDecoration(labelText: 'Probe ID'),
+                      ),
+                      const SizedBox(height: 12),
+                      // Calibration Date (read-only; opens date picker)
+                      InkWell(
+                        onTap: () => _pickDate(_calDateCtrl),
+                        child: IgnorePointer(
+                          child: TextField(
+                            controller: _calDateCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Calibration Date',
+                              suffixIcon: Icon(Icons.calendar_today),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Calibration Due (read-only; opens date picker)
-                    InkWell(
-                      onTap: () => _pickDate(_calDueCtrl),
-                      child: IgnorePointer(
-                        child: TextField(
-                          controller: _calDueCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Calibration Due',
-                            suffixIcon: Icon(Icons.calendar_today),
+                      const SizedBox(height: 12),
+                      // Calibration Due (read-only; opens date picker)
+                      InkWell(
+                        onTap: () => _pickDate(_calDueCtrl),
+                        child: IgnorePointer(
+                          child: TextField(
+                            controller: _calDueCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Calibration Due',
+                              suffixIcon: Icon(Icons.calendar_today),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _minCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Min Dew Point',
-                        suffixText: '°C',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _maxCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Max Dew Point',
-                        suffixText: '°C',
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: (selectedDet == null || loadingSensor)
-                              ? null
-                              : _forceLoadFromDb,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Load from PC DB'),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _minCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Min Dew Point',
+                          suffixText: '°C',
                         ),
-                        ElevatedButton.icon(
-                          onPressed: saving ? null : _saveLocalOnly,
-                          icon: saving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.save),
-                          label: const Text('Save locally'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _maxCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Max Dew Point',
+                          suffixText: '°C',
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: (selectedDet == null || loadingSensor)
+                                ? null
+                                : _forceLoadFromDb,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Load from PC DB'),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: saving ? null : _saveLocalOnly,
+                            icon: saving
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.save),
+                            label: const Text('Save locally'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 30),
-            Text('Selected: ${selectedDet ?? "—"}'),
-          ],
+              const SizedBox(height: 30),
+              Text('Selected: ${selectedDet ?? "—"}'),
+            ],
+          ),
         ),
       ),
     );
