@@ -1,13 +1,14 @@
 // lib/screens/home_screen.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_constants.dart';
+import '../utils/dew_point_converter.dart';
 
 // Helper: parse DET -> ParameterNo (keeps compatibility with det_selector)
 int? detToParamNumber(String detName) {
@@ -145,42 +146,6 @@ class HomeScreenState extends State<HomeScreen>
   String updatedAt = '––';
   String status = 'idle';
 
-  // Helper: Calculate Corrected Sonntag (ppmv)
-  String calculateSonntagPpm(double tempC) {
-    const double P = 101325.0; // Standard atmospheric pressure in Pa
-    final double T = tempC + 273.15; // Kelvin
-
-    double lnEs;
-    if (tempC < 0.01) {
-      // Over ice (Sonntag 1990)
-      lnEs =
-          -6024.5282 / T +
-          29.32707 +
-          1.0613868e-2 * T -
-          1.3198825e-5 * T * T -
-          0.49382577 * math.log(T);
-    } else {
-      // Over water
-      lnEs =
-          -6096.9385 / T +
-          21.2409642 -
-          2.711193e-2 * T +
-          1.673952e-5 * T * T +
-          2.433502 * math.log(T);
-    }
-
-    final double es = math.exp(lnEs); // Vapor pressure in Pa
-    final double ppm = (es / (P - es)) * 1e6;
-
-    // Format: integer for most, maybe 1 decimal if small?
-    // User table shows integers even for small values (e.g. 5).
-    // Let's stick to integer for consistency with table, unless < 1.
-    if (ppm < 1.0 && ppm > 0.0) {
-      return '${ppm.toStringAsFixed(2)} ppm';
-    }
-    return '${ppm.round()} ppm';
-  }
-
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (°C)';
 
@@ -309,7 +274,8 @@ class HomeScreenState extends State<HomeScreen>
                   dew.toString().trim() != '') {
                 final double? val = double.tryParse(dew.toString());
                 if (val != null) {
-                  ppmDisplay = calculateSonntagPpm(val);
+                  // Use lookup table converter
+                  ppmDisplay = DewPointConverter.getPpmString(val);
                 } else {
                   ppmDisplay = '-- ppm';
                 }
