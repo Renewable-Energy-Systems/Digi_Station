@@ -250,6 +250,16 @@ class HomeScreenState extends State<HomeScreen>
         // Only accept updates for currently selected column (robust)
         if (col != null && col == selectedDetColumn) {
           final dew = m['dewpoint_c'];
+          
+          if (dew != null && 
+              dew.toString().toLowerCase() != 'null' && 
+              dew.toString().trim() != '') {
+            final double? dewVal = double.tryParse(dew.toString());
+            if (dewVal == 0.0) {
+              return; // Ignore exact zero values
+            }
+          }
+
           final date = m['date'] ?? '';
           final time = m['time'] ?? '';
           String dewStr;
