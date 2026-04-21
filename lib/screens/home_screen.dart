@@ -189,9 +189,10 @@ class HomeScreenState extends State<HomeScreen>
         calibrationDate = info['calibrationDate'] ?? '';
         calibrationDue = info['calibrationDue'] ?? '';
         minVal = info['min'] ?? '';
-        maxVal = info['max'] ?? '';
-
-        // don't change dewpoint on load; updatedAt will be set when WS message arrives
+        // Clear old dewpoint data when loading new DET
+        dewPointDisplay = '-- °C';
+        ppmDisplay = '-- ppm';
+        updatedAt = '––';
       });
     }
 
@@ -356,7 +357,10 @@ class HomeScreenState extends State<HomeScreen>
         minVal = info['min'] ?? '';
         maxVal = info['max'] ?? '';
 
-        updatedAt = DateTime.now().toString();
+        // Reset display while waiting for new data
+        dewPointDisplay = '-- °C';
+        ppmDisplay = '-- ppm';
+        updatedAt = '––';
       });
     }
     // re-subscribe to ensure WS streaming
@@ -429,6 +433,7 @@ class HomeScreenState extends State<HomeScreen>
                               ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
+                              isLive: (status == 'ok' && dewPointDisplay != '-- °C'),
                             ),
                           ],
                         );
@@ -464,6 +469,7 @@ class HomeScreenState extends State<HomeScreen>
                               ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
+                              isLive: (status == 'ok' && dewPointDisplay != '-- °C'),
                             ),
                           ),
                         ],
@@ -658,6 +664,7 @@ class _DewPointCard extends StatelessWidget {
     required this.updatedAt,
     required this.minVal,
     required this.maxVal,
+    required this.isLive,
   });
 
   final Color dewBg;
@@ -670,6 +677,7 @@ class _DewPointCard extends StatelessWidget {
   final String updatedAt;
   final String minVal;
   final String maxVal;
+  final bool isLive;
 
   TextStyle get _headingStyle =>
       TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: dewLabelText);
@@ -772,37 +780,40 @@ class _DewPointCard extends StatelessWidget {
               const Spacer(),
 
               // LIVE Indicator
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9), // Light green bg
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF4CAF50), width: 1),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF2E7D32), // Darker green dot
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'LIVE',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF2E7D32),
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+               Container(
+                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                 decoration: BoxDecoration(
+                   color: isLive ? const Color(0xFFE8F5E9) : const Color(0xFFF5F5F5),
+                   borderRadius: BorderRadius.circular(12),
+                   border: Border.all(
+                     color: isLive ? const Color(0xFF4CAF50) : const Color(0xFFBDBDBD),
+                     width: 1,
+                   ),
+                 ),
+                 child: Row(
+                   mainAxisSize: MainAxisSize.min,
+                   children: [
+                     Container(
+                       width: 8,
+                       height: 8,
+                       decoration: BoxDecoration(
+                         color: isLive ? const Color(0xFF2E7D32) : const Color(0xFF757575),
+                         shape: BoxShape.circle,
+                       ),
+                     ),
+                     const SizedBox(width: 6),
+                     Text(
+                       isLive ? 'LIVE' : 'OFFLINE',
+                       style: TextStyle(
+                         fontSize: 12,
+                         fontWeight: FontWeight.w700,
+                         color: isLive ? const Color(0xFF2E7D32) : const Color(0xFF757575),
+                         letterSpacing: 0.5,
+                       ),
+                     ),
+                   ],
+                 ),
+               ),
             ],
           ),
 
