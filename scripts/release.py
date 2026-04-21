@@ -73,7 +73,7 @@ def github_upload(token, tag, apk_path):
         "tag_name": tag,
         "target_commitish": "main",
         "name": f"{tag}",
-        "body": "Automated release via script.",
+        "body": "Updated Server URL and other improvements.",
         "draft": False,
         "prerelease": False
     }
