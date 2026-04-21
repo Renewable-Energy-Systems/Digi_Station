@@ -3,18 +3,16 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import '../socket_service.dart';
 
 class DetSelector extends StatefulWidget {
   final String apiHost; // e.g. http://192.168.0.77:3000
-  final WebSocketChannel? wsChannel;
   final ValueChanged<String?>? onChanged;
   final ValueChanged<Map<String, dynamic>?>? onSensorInfo;
 
   const DetSelector({
     super.key,
     required this.apiHost,
-    this.wsChannel,
     this.onChanged,
     this.onSensorInfo,
   });
@@ -68,8 +66,8 @@ class _DetSelectorState extends State<DetSelector> {
         widget.onChanged?.call(selected);
       }
 
-      if (selected != null && widget.wsChannel != null) {
-        _sendSubscribe(selected!);
+      if (selected != null) {
+        SocketService().subscribeDewpoint(selected!);
       }
 
       if (selected != null) {
@@ -120,16 +118,14 @@ class _DetSelectorState extends State<DetSelector> {
     final old = selected;
     final prefs = await SharedPreferences.getInstance();
 
-    if (old != null && widget.wsChannel != null) {
+    if (old != null) {
       _sendUnsubscribe(old);
     }
 
     await prefs.setString(_prefKey, newCol);
     setState(() => selected = newCol);
 
-    if (widget.wsChannel != null) {
-      _sendSubscribe(newCol);
-    }
+    SocketService().subscribeDewpoint(newCol);
 
     widget.onChanged?.call(newCol);
 
@@ -138,23 +134,11 @@ class _DetSelectorState extends State<DetSelector> {
   }
 
   void _sendSubscribe(String col) {
-    try {
-      final msg = jsonEncode({'action': 'subscribe', 'col': col});
-      widget.wsChannel?.sink.add(msg);
-      print('DetSelector: subscribe $col');
-    } catch (e) {
-      print('DetSelector subscribe error: $e');
-    }
+    SocketService().subscribeDewpoint(col);
   }
 
   void _sendUnsubscribe(String col) {
-    try {
-      final msg = jsonEncode({'action': 'unsubscribe', 'col': col});
-      widget.wsChannel?.sink.add(msg);
-      print('DetSelector: unsubscribe $col');
-    } catch (e) {
-      print('DetSelector unsubscribe error: $e');
-    }
+    SocketService().unsubscribeDewpoint(col);
   }
 
   @override
