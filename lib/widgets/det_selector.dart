@@ -40,14 +40,18 @@ class _DetSelectorState extends State<DetSelector> {
     setState(() => status = 'loading');
     try {
       final cols = await _fetchColumns();
-      final dets = cols
-          .where((c) => c.toLowerCase().startsWith('det'))
-          .toList();
+      // Allow ALL columns (DETs and Workstation Names) to be selectable
+      final dets = cols.toList();
 
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefKey);
 
       String? initial = saved;
+      // Safety check: Avoid Red Screen if saved value is no longer in the list
+      if (initial != null && !dets.contains(initial)) {
+        initial = null;
+      }
+
       if (initial == null && dets.isNotEmpty) {
         initial = dets.first;
         await prefs.setString(_prefKey, initial);

@@ -147,7 +147,7 @@ class HomeScreenState extends State<HomeScreen>
   String status = 'idle';
 
   // DET column currently selected (from shared prefs)
-  String selectedDetColumn = 'Det01 (°C)';
+  String selectedDetColumn = 'Det01 (C)';
 
   // WebSocket channel & subscription tracking
   WebSocketChannel? _channel;
