@@ -1,7 +1,5 @@
-// lib/screens/det_selector_screen.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import '../widgets/det_selector.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -52,14 +50,12 @@ Future<void> saveLocalSensorInfo(int param, Map<String, String> info) async {
 }
 
 class DetSelectorScreen extends StatefulWidget {
-  final WebSocketChannel? channel;
   final String apiHost;
   final VoidCallback? onDetChanged; // Added callback
 
   const DetSelectorScreen({
     super.key,
     required this.apiHost,
-    this.channel,
     this.onDetChanged, // Added to constructor
   });
 
@@ -225,12 +221,8 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
       'max': _maxCtrl.text.trim(),
     };
     await saveLocalSensorInfo(param, map);
-    // optional: notify via WS that this tablet saved a local override (server will ignore for DB)
-    try {
-      widget.channel?.sink.add(
-        json.encode({'action': 'sensorinfo_local_saved', 'param': param}),
-      );
-    } catch (_) {}
+    // notify server (optional, server likely ignores based on current logic)
+    // Removed direct widget.channel usage as per refactor
 
     // Notify Home Screen immediately
     widget.onDetChanged?.call();
@@ -335,7 +327,6 @@ class _DetSelectorScreenState extends State<DetSelectorScreen> {
             children: [
               DetSelector(
                 apiHost: widget.apiHost,
-                wsChannel: widget.channel,
                 onChanged: _onDetChanged,
                 onSensorInfo: (map) {
                   if (map != null) {
