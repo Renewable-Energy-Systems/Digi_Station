@@ -73,7 +73,7 @@ def github_upload(token, tag, apk_path):
         "tag_name": tag,
         "target_commitish": "main",
         "name": f"{tag}",
-        "body": "Updated Server URL and other improvements.",
+        "body": "### Improvements\n- **Dynamic LIVE Status**: Home screen now correctly shows OFFLINE if data is missing.\n- **Stale Data Fix**: Dew point, PPM, and 'Updated' timestamp now reset immediately when switching detectors.\n- **Repo Cleanup**: Ignored build reports in version control.",
         "draft": False,
         "prerelease": False
     }
