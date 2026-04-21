@@ -73,7 +73,7 @@ def github_upload(token, tag, apk_path):
         "tag_name": tag,
         "target_commitish": "main",
         "name": f"{tag}",
-        "body": "### Improvements\n- **Dynamic LIVE Status**: Home screen now correctly shows OFFLINE if data is missing.\n- **Stale Data Fix**: Dew point, PPM, and 'Updated' timestamp now reset immediately when switching detectors.\n- **Repo Cleanup**: Ignored build reports in version control.",
+        "body": "### Improvements (v2.0.3)\n- **Auto-Resume & Re-subscription**: WebSocket connection now automatically restores and re-subscribes to the active detector after a server restart.\n- **Dual-Stack Socket Service**: Unified Native WebSockets (Dewpoint) and Socket.IO (Gauges/RPi) into a single optimized manager.\n- **UI Stability**: Fixed missing Max values and restored range-based color logic (Green/Red).\n- **Centralized Synchronization**: Eliminated redundant connection management and fixed JSON parsing errors.",
         "draft": False,
         "prerelease": False
     }
