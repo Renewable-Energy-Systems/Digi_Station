@@ -17,10 +17,9 @@ import 'package:ota_update/ota_update.dart';
 import '../services/update_service.dart';
 
 class KioskShell extends StatefulWidget {
-  final WebSocketChannel? channel;
   final String apiHost;
 
-  const KioskShell({super.key, required this.apiHost, this.channel});
+  const KioskShell({super.key, required this.apiHost});
 
   @override
   State<KioskShell> createState() => _KioskShellState();
@@ -72,7 +71,6 @@ class _KioskShellState extends State<KioskShell> {
           pages.add(
             DetSelectorScreen(
               apiHost: widget.apiHost,
-              channel: widget.channel,
               onDetChanged: () {
                 _homeKey.currentState?.refreshSensorInfo();
               },

@@ -3,12 +3,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/io.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_constants.dart';
 import '../utils/dew_point_converter.dart';
+import '../socket_service.dart';
 
 // Helper: parse DET -> ParameterNo (keeps compatibility with det_selector)
 int? detToParamNumber(String detName) {
@@ -87,15 +86,6 @@ Future<Map<String, String>> getEffectiveSensorInfo(
       'min': master['Min']?.toString() ?? '',
       'max': master['Max']?.toString() ?? '',
     };
-    print('[DEBUG] Parsed info: $master'); // Added debug log
-    return {
-      'workstation': master['ChannelName']?.toString() ?? '',
-      'probeId': master['SenID']?.toString() ?? '',
-      'calibrationDate': stripDate(master['Cali.Date']),
-      'calibrationDue': stripDate(master['Cali.Due']),
-      'min': master['Min']?.toString() ?? '',
-      'max': master['Max']?.toString() ?? '',
-    };
   }
 
   return {
@@ -149,10 +139,10 @@ class HomeScreenState extends State<HomeScreen>
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (C)';
 
-  // WebSocket channel & subscription tracking
-  WebSocketChannel? _channel;
-  StreamSubscription? _wsSub;
-  String? _subscribedCol; // currently subscribed column on WS
+  // Subscription tracking
+  StreamSubscription? _msgSub;
+  StreamSubscription? _statusSub;
+  SocketConnectionState _connState = SocketConnectionState.disconnected;
 
   @override
   void initState() {
@@ -162,16 +152,13 @@ class HomeScreenState extends State<HomeScreen>
 
   Future<void> _initAll() async {
     await _loadSelectedDetAndSensorInfo();
-    _connectWebSocket();
+    _listenToSocket();
   }
 
   @override
   void dispose() {
-    _wsSub?.cancel();
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
-    _channel = null;
+    _msgSub?.cancel();
+    _statusSub?.cancel();
     super.dispose();
   }
 
@@ -189,6 +176,7 @@ class HomeScreenState extends State<HomeScreen>
         calibrationDate = info['calibrationDate'] ?? '';
         calibrationDue = info['calibrationDue'] ?? '';
         minVal = info['min'] ?? '';
+        maxVal = info['max'] ?? '';
         // Clear old dewpoint data when loading new DET
         dewPointDisplay = '-- °C';
         ppmDisplay = '-- ppm';
@@ -197,56 +185,47 @@ class HomeScreenState extends State<HomeScreen>
     }
 
     // ensure WS subscription matches selected DET
-    _subscribeToColumn(selectedDetColumn);
+    SocketService().subscribeDewpoint(selectedDetColumn);
   }
 
-  // (re)connect WebSocket channel used to receive dewpoint updates
-  void _connectWebSocket() {
-    // close previous
-    _wsSub?.cancel();
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
-    _channel = null;
+  // Listen to centralized WebSocket service
+  void _listenToSocket() {
+    _msgSub?.cancel();
+    _statusSub?.cancel();
 
-    try {
-      _channel = IOWebSocketChannel.connect(wsUrl);
-      _wsSub = _channel!.stream.listen(
-        (message) {
-          _handleWsMessage(message);
-        },
-        onError: (err) {
-          print('[WS] error: $err');
-          // keep status updated
-          if (mounted) setState(() => status = 'ws-err');
-        },
-        onDone: () {
-          print('[WS] closed');
-          if (mounted) setState(() => status = 'ws-closed');
-          // try reconnect after a short delay
-          Future.delayed(const Duration(seconds: 3), () {
-            if (mounted) _connectWebSocket();
-          });
-        },
-        cancelOnError: true,
-      );
-      if (mounted) setState(() => status = 'ws-connected');
-      // subscribe if we already know selected column
-      if (selectedDetColumn.isNotEmpty) _subscribeToColumn(selectedDetColumn);
-    } catch (e) {
-      print('[WS] connect exception: $e');
-      if (mounted) setState(() => status = 'ws-failed');
-      // schedule retry
-      Future.delayed(const Duration(seconds: 5), () {
-        if (mounted) _connectWebSocket();
-      });
+    final ss = SocketService();
+    
+    // Initial state
+    _connState = ss.wsState;
+
+    _msgSub = ss.dewpointStream.listen((m) {
+      _handleWsMessage(m);
+    });
+
+    _statusSub = ss.wsStateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          _connState = state;
+          if (state == SocketConnectionState.connected) {
+            status = 'ok';
+          } else {
+            status = 'offline';
+          }
+        });
+      }
+    });
+
+    // If already connected, ensure we are subscribed
+    if (ss.wsState == SocketConnectionState.connected) {
+      ss.subscribeDewpoint(selectedDetColumn);
     }
   }
 
-  void _handleWsMessage(dynamic raw) {
+  void _handleWsMessage(dynamic msg) {
     try {
-      final m = json.decode(raw.toString());
-      if (m is Map && m['type'] == 'update') {
+      if (msg is! Map) return;
+      final m = msg;
+      if (m['type'] == 'update') {
         final col = m['col']?.toString();
         // Only accept updates for currently selected column (robust)
         if (col != null && col == selectedDetColumn) {
@@ -304,37 +283,7 @@ class HomeScreenState extends State<HomeScreen>
         print('[WS] subscribed: ${m['col']}');
       }
     } catch (e) {
-      print('[WS] message parse error: $e -- raw: $raw');
-    }
-  }
-
-  // subscribe/unsubscribe helpers (sends JSON action messages to WS)
-  void _subscribeToColumn(String col) {
-    // if channel not ready, we'll attempt again after small delay (connect may be async)
-    if (_channel == null) {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _subscribeToColumn(col);
-      });
-      return;
-    }
-
-    try {
-      // if previously subscribed to a different column, unsubscribe it first
-      if (_subscribedCol != null && _subscribedCol != col) {
-        final msg = json.encode({
-          'action': 'unsubscribe',
-          'col': _subscribedCol,
-        });
-        _channel!.sink.add(msg);
-      }
-
-      // send subscribe for the requested column
-      final subMsg = json.encode({'action': 'subscribe', 'col': col});
-      _channel!.sink.add(subMsg);
-      _subscribedCol = col;
-      print('[WS] subscribe sent for $col');
-    } catch (e) {
-      print('[WS] subscribe error: $e');
+      print('[WS] message processing error: $e -- data: $msg');
     }
   }
 
@@ -364,7 +313,7 @@ class HomeScreenState extends State<HomeScreen>
       });
     }
     // re-subscribe to ensure WS streaming
-    _subscribeToColumn(selectedDetColumn);
+    SocketService().subscribeDewpoint(selectedDetColumn);
   }
 
   @override
@@ -433,7 +382,7 @@ class HomeScreenState extends State<HomeScreen>
                               ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
-                              isLive: (status == 'ok' && dewPointDisplay != '-- °C'),
+                              isLive: (_connState == SocketConnectionState.connected && dewPointDisplay != '-- °C'),
                             ),
                           ],
                         );
@@ -469,7 +418,7 @@ class HomeScreenState extends State<HomeScreen>
                               ppmDisplay: ppmDisplay,
                               minVal: minVal,
                               maxVal: maxVal,
-                              isLive: (status == 'ok' && dewPointDisplay != '-- °C'),
+                              isLive: (_connState == SocketConnectionState.connected && dewPointDisplay != '-- °C'),
                             ),
                           ),
                         ],

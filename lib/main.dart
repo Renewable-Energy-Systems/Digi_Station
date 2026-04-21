@@ -1,21 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/kiosk_shell.dart';
-import 'package:web_socket_channel/io.dart';
 import 'config/api_constants.dart';
+import 'socket_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock orientation (optional but usually desired for kiosk tablets)
+  // Initialize centralized WebSocket service (Dewpoint)
+  SocketService().connectDewpoint(ApiConstants.detWsUrl);
+
+  // Lock orientation
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-
-  // Hide system overlays? (Nav bar / status bar)
-  // You *can* uncomment this for hardcore kiosk, but test first.
-  // SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
   runApp(const RESKioskApp());
 }
@@ -47,7 +46,6 @@ class RESKioskApp extends StatelessWidget {
       theme: theme,
       home: KioskShell(
         apiHost: ApiConstants.detApiHost,
-        channel: IOWebSocketChannel.connect(ApiConstants.detWsUrl),
       ),
     );
   }
