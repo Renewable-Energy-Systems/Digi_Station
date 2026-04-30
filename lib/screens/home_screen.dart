@@ -171,6 +171,8 @@ class HomeScreenState extends State<HomeScreen>
   StreamSubscription? _msgSub;
   StreamSubscription? _statusSub;
   SocketConnectionState _connState = SocketConnectionState.disconnected;
+  
+  http.Client? _sseClient;
 
   @override
   void initState() {
@@ -182,12 +184,14 @@ class HomeScreenState extends State<HomeScreen>
     await _loadSelectedDetAndSensorInfo();
     _listenToSocket();
     _refreshSlip();
+    _listenToSlipUpdates();
   }
 
   @override
   void dispose() {
     _msgSub?.cancel();
     _statusSub?.cancel();
+    _sseClient?.close();
     super.dispose();
   }
 
@@ -346,7 +350,39 @@ class HomeScreenState extends State<HomeScreen>
     _refreshSlip();
   }
 
-  Future<void> _refreshSlip() async {
+  // SSE Listener for Instant Process Slip Updates
+  Future<void> _listenToSlipUpdates() async {
+    final baseUrl = await ConfigService().getOpsDigiBaseUrl();
+    final url = Uri.parse('$baseUrl/api_slip_stream.php');
+    
+    _sseClient?.close();
+    _sseClient = http.Client();
+    try {
+      final request = http.Request('GET', url);
+      final response = await _sseClient!.send(request);
+
+      response.stream.transform(utf8.decoder).listen((data) {
+        if (data.contains('slip_updated')) {
+          _refreshSlip(showErrors: false);
+        }
+      }, onDone: () {
+        // Reconnect when the server closes the connection (every 5 minutes)
+        if (mounted) {
+          Future.delayed(const Duration(seconds: 2), _listenToSlipUpdates);
+        }
+      }, onError: (e) {
+        if (mounted) {
+          Future.delayed(const Duration(seconds: 5), _listenToSlipUpdates);
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        Future.delayed(const Duration(seconds: 5), _listenToSlipUpdates);
+      }
+    }
+  }
+
+  Future<void> _refreshSlip({bool showErrors = true}) async {
     if (_isFetchingSlip) return;
     
     final workstationId = await ConfigService().getWorkstationId();
@@ -365,12 +401,14 @@ class HomeScreenState extends State<HomeScreen>
     } catch (e) {
       if (mounted) {
         setState(() => _isFetchingSlip = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Slip Error: $e'),
-            duration: const Duration(seconds: 5),
-          ),
-        );
+        if (showErrors) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Slip Error: $e'),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       }
     }
   }
