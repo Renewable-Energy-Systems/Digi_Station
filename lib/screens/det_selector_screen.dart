@@ -25,12 +25,29 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
       final j = json.decode(resp.body);
       print('[DEBUG] DetSelector response: $j'); // Added debug log
       if (j is Map && j['found'] == true && j['sensor'] is Map) {
-        return Map<String, dynamic>.from(j['sensor']);
+        final sensorData = Map<String, dynamic>.from(j['sensor']);
+        // Cache successful response
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('sensor_master_cache_$param', json.encode(sensorData));
+        return sensorData;
       }
     }
   } catch (e) {
     print('fetchSensorInfoFromServerByParam error: $e');
   }
+
+  // Fallback to cache if network request fails
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('sensor_master_cache_$param');
+    if (cached != null) {
+      print('[DEBUG] using cached sensorinfo for param $param in DetSelector');
+      return Map<String, dynamic>.from(json.decode(cached));
+    }
+  } catch (e) {
+    print('fetchSensorInfoFromServerByParam cache error: $e');
+  }
+
   return null;
 }
 

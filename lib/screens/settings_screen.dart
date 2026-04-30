@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/api_constants.dart';
 import '../services/config_service.dart';
 import '../services/update_service.dart';
 import '../services/screen_config_service.dart'; // Import new service
@@ -27,6 +28,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isCheckingUpdate = false;
   String _updateStatus = '';
   String _appVersion = '';
+  List<Map<String, dynamic>> _workstations = [];
+  bool _isFetchingWorkstations = false;
+  String? _fetchError;
+  bool _isManualMode = false;
+  bool _useProductionApi = false;
 
   final TextEditingController _workstationIdController =
       TextEditingController();
@@ -48,23 +54,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final machine = await _configService.getSavedMachineType();
-    final workstationId = await _configService.getWorkstationId();
-    final savedVideoIds = await _configService.getEnabledVideoIds();
-    final packageInfo = await PackageInfo.fromPlatform();
-    final enabledScreens = await _screenConfigService
-        .getEnabledScreens(); // Load screens
+    setState(() {
+      _isFetchingWorkstations = true;
+      _fetchError = null;
+    });
 
-    if (mounted) {
-      setState(() {
-        _selectedMachine = machine;
-        _workstationIdController.text = workstationId ?? '';
-        _selectedVideoIds.clear();
-        _selectedVideoIds.addAll(savedVideoIds);
-        _enabledScreens = enabledScreens;
-        _appVersion = packageInfo.version;
-        _isLoading = false;
-      });
+    try {
+      // 1. Load local preferences first
+      final workstationId = await _configService.getWorkstationId();
+      final machine = await _configService.getSavedMachineType();
+      final savedVideoIds = await _configService.getEnabledVideoIds();
+      final packageInfo = await PackageInfo.fromPlatform();
+      final enabledScreens = await _screenConfigService.getEnabledScreens();
+      final useProductionApi = await _configService.shouldUseProductionApi();
+
+      if (mounted) {
+        setState(() {
+          _selectedMachine = machine;
+          _workstationIdController.text = workstationId ?? '';
+          _appVersion = packageInfo.version;
+          _selectedVideoIds.clear();
+          _selectedVideoIds.addAll(savedVideoIds);
+          _enabledScreens = enabledScreens;
+          _useProductionApi = useProductionApi;
+        });
+      }
+
+      // 2. Attempt network calls
+      final workstations = await _configService.fetchWorkstations();
+
+      if (mounted) {
+        setState(() {
+          _workstations = workstations;
+          _isFetchingWorkstations = false;
+          _isLoading = false;
+
+          // Auto-enable manual mode if no workstations were fetched
+          if (_workstations.isEmpty && workstationId != null && workstationId.isNotEmpty) {
+            _isManualMode = true;
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingWorkstations = false;
+          _fetchError = "Error: $e";
+          _isManualMode = true; // Fallback to manual entry
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -314,26 +353,135 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Workstation ID (e.g. PRD-025)'),
-                        const SizedBox(height: 8),
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _workstationIdController,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  hintText: 'Enter ID',
-                                  isDense: true,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: _saveWorkstationId,
-                              child: const Text('Save'),
+                            const Text('Workstation ID'),
+                            TextButton.icon(
+                              onPressed: () => setState(() => _isManualMode = !_isManualMode),
+                              icon: Icon(_isManualMode ? Icons.list_rounded : Icons.edit_rounded, size: 18),
+                              label: Text(_isManualMode ? 'Show List' : 'Enter Manually', style: const TextStyle(fontSize: 12)),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (_fetchError != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Text(
+                              _fetchError!,
+                              style: const TextStyle(color: Colors.red, fontSize: 12),
+                            ),
+                          ),
+                        if (_isFetchingWorkstations)
+                          const LinearProgressIndicator()
+                        else if (_isManualMode || _workstations.isEmpty)
+                          Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _workstationIdController,
+                                      decoration: const InputDecoration(
+                                        border: OutlineInputBorder(),
+                                        hintText: 'Enter ID (e.g. PRD-362)',
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton(
+                                    onPressed: _saveWorkstationId,
+                                    child: const Text('Save'),
+                                  ),
+                                  IconButton(
+                                    onPressed: _loadSettings,
+                                    icon: const Icon(Icons.refresh_rounded),
+                                    tooltip: 'Retry Loading List',
+                                  ),
+                                ],
+                              ),
+                              if (_workstations.isEmpty && !_isFetchingWorkstations)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 8.0),
+                                  child: Text(
+                                    'Notice: List is empty. Using manual entry.',
+                                    style: TextStyle(color: Colors.orange, fontSize: 11),
+                                  ),
+                                ),
+                            ],
+                          )
+                        else
+                          DropdownButtonFormField<String>(
+                            value: _workstations.any((w) => w['id'] == _workstationIdController.text)
+                                ? _workstationIdController.text
+                                : null,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: _workstations.map((ws) {
+                              return DropdownMenuItem<String>(
+                                value: ws['id'],
+                                child: Text("${ws['id']} - ${ws['name']}"),
+                              );
+                            }).toList(),
+                            onChanged: (val) {
+                              if (val != null) {
+                                _workstationIdController.text = val;
+                                _saveWorkstationId();
+                              }
+                            },
+                            hint: const Text('Select Workstation'),
+                          ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Source: ${ApiConstants.opsDigiBaseUrl}',
+                          style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                        ),
+                        const Divider(height: 32),
+                        
+                        // API Environment Switch
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'API Environment',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                                Text(
+                                  'Choose between Local and Production Server',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const Text('Local', style: TextStyle(fontSize: 12)),
+                                Switch(
+                                  value: _useProductionApi,
+                                  onChanged: (val) async {
+                                    await _configService.saveUseProductionApi(val);
+                                    setState(() => _useProductionApi = val);
+                                    _loadSettings(); // Reload workstations from new source
+                                    widget.onSettingsChanged?.call();
+                                  },
+                                ),
+                                const Text('Production', style: TextStyle(fontSize: 12)),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _useProductionApi 
+                              ? 'Active: ${ApiConstants.productionOpsDigiBaseUrl}'
+                              : 'Active: ${ApiConstants.opsDigiBaseUrl}',
+                          style: const TextStyle(fontSize: 10, color: Colors.blueAccent),
                         ),
                       ],
                     ),

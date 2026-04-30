@@ -8,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_constants.dart';
 import '../utils/dew_point_converter.dart';
 import '../socket_service.dart';
+import '../models/process_slip_model.dart';
+import '../services/process_slip_service.dart';
+import '../services/config_service.dart';
 
 // Helper: parse DET -> ParameterNo (keeps compatibility with det_selector)
 int? detToParamNumber(String detName) {
@@ -27,15 +30,33 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
       '$apiHost/api/sensorinfo',
     ).replace(queryParameters: {'param': param.toString()});
     final resp = await http.get(uri).timeout(const Duration(seconds: 6));
-    if (resp.statusCode != 200) return null;
-    print('[DEBUG] sensorinfo response: ${resp.body}'); // Added debug log
-    final j = json.decode(resp.body);
-    if (j is Map && j['found'] == true && j['sensor'] is Map) {
-      return Map<String, dynamic>.from(j['sensor']);
+    if (resp.statusCode == 200) {
+      print('[DEBUG] sensorinfo response: ${resp.body}'); // Added debug log
+      final j = json.decode(resp.body);
+      if (j is Map && j['found'] == true && j['sensor'] is Map) {
+        final sensorData = Map<String, dynamic>.from(j['sensor']);
+        // Cache successful response
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('sensor_master_cache_$param', json.encode(sensorData));
+        return sensorData;
+      }
     }
   } catch (e) {
     print('fetchSensorInfoFromServerByParam error: $e');
   }
+
+  // Fallback to cache if network request fails
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('sensor_master_cache_$param');
+    if (cached != null) {
+      print('[DEBUG] using cached sensorinfo for param $param');
+      return Map<String, dynamic>.from(json.decode(cached));
+    }
+  } catch (e) {
+    print('fetchSensorInfoFromServerByParam cache error: $e');
+  }
+
   return null;
 }
 
@@ -139,6 +160,13 @@ class HomeScreenState extends State<HomeScreen>
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (C)';
 
+  // Process Slip State
+  ProcessSlip? _currentSlip;
+  bool _isSlipVisible = false;
+  bool _isFetchingSlip = false;
+  bool _showAllRows = false;
+  final ProcessSlipService _slipService = ProcessSlipService();
+
   // Subscription tracking
   StreamSubscription? _msgSub;
   StreamSubscription? _statusSub;
@@ -153,6 +181,7 @@ class HomeScreenState extends State<HomeScreen>
   Future<void> _initAll() async {
     await _loadSelectedDetAndSensorInfo();
     _listenToSocket();
+    _refreshSlip();
   }
 
   @override
@@ -314,6 +343,36 @@ class HomeScreenState extends State<HomeScreen>
     }
     // re-subscribe to ensure WS streaming
     SocketService().subscribeDewpoint(selectedDetColumn);
+    _refreshSlip();
+  }
+
+  Future<void> _refreshSlip() async {
+    if (_isFetchingSlip) return;
+    
+    final workstationId = await ConfigService().getWorkstationId();
+    if (workstationId == null || workstationId.isEmpty) return;
+
+    if (mounted) setState(() => _isFetchingSlip = true);
+    
+    try {
+      final slip = await _slipService.fetchLatestSlip(workstationId);
+      if (mounted) {
+        setState(() {
+          _currentSlip = slip;
+          _isFetchingSlip = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isFetchingSlip = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Slip Error: $e'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -322,8 +381,10 @@ class HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Container(
-      decoration: const BoxDecoration(
+    return Stack(
+      children: [
+        Container(
+          decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
@@ -442,6 +503,45 @@ class HomeScreenState extends State<HomeScreen>
           ),
         ),
       ),
+    ),
+    
+    // --- Process Slip Overlay ---
+        if (_isSlipVisible)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => setState(() => _isSlipVisible = false),
+              child: Container(
+                color: Colors.black.withOpacity(0.5),
+              ),
+            ),
+          ),
+        
+        // --- Centered Slip Content ---
+        if (_currentSlip != null && _isSlipVisible)
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: _ProcessSlipContent(
+                slip: _currentSlip!,
+                workstationName: workstationName,
+                showAll: _showAllRows,
+                onToggleShowAll: () => setState(() => _showAllRows = !_showAllRows),
+                onClose: () => setState(() => _isSlipVisible = false),
+              ),
+            ),
+          ),
+
+        // --- Process Slip Button (Only visible when NOT open) ---
+        if (_currentSlip != null && !_isSlipVisible)
+          Positioned(
+            right: 24,
+            bottom: 24,
+            child: _ProcessSlipButton(
+              slip: _currentSlip!,
+              onToggle: () => setState(() => _isSlipVisible = true),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -674,14 +774,7 @@ class _DewPointCard extends StatelessWidget {
 
   TextStyle get _minMaxLabelStyle => TextStyle(
     fontSize: 14,
-    fontWeight: FontWeight.w500,
-    color: dewLabelText.withOpacity(0.6),
-  );
-
-  TextStyle get _minMaxValueStyle => TextStyle(
-    fontSize: 18,
-    fontWeight: FontWeight.w700,
-    color: dewBigNumber, // Use the blue color for values
+    fontWeight: FontWeight.w600,
   );
 
   @override
@@ -692,7 +785,7 @@ class _DewPointCard extends StatelessWidget {
         maxWidth: 480,
         minHeight: 200,
       ),
-      padding: const EdgeInsets.all(20), // Slightly reduced padding
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: dewBg,
         borderRadius: BorderRadius.circular(18),
@@ -707,7 +800,6 @@ class _DewPointCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // Header row
           Row(
             children: [
               Container(
@@ -725,10 +817,7 @@ class _DewPointCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text('Dew Point / PPMv', style: _headingStyle),
-
               const Spacer(),
-
-              // LIVE Indicator
                Container(
                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                  decoration: BoxDecoration(
@@ -768,17 +857,14 @@ class _DewPointCard extends StatelessWidget {
 
           const Spacer(),
 
-          // Main values Row
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Dew Point Section
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Fixed height container to align baselines and labels
                     SizedBox(
                       height: 60,
                       child: Center(
@@ -786,9 +872,7 @@ class _DewPointCard extends StatelessWidget {
                           fit: BoxFit.scaleDown,
                           child: Text(
                             dewPointDisplay,
-                            style: _bigNumberStyle.copyWith(
-                              fontSize: 42,
-                            ), // Reduced to proper fit
+                            style: _bigNumberStyle.copyWith(fontSize: 42),
                           ),
                         ),
                       ),
@@ -798,8 +882,7 @@ class _DewPointCard extends StatelessWidget {
                   ],
                 ),
               ),
-
-              // Vertical Divider
+              
               Container(
                 height: 50,
                 width: 2,
@@ -807,7 +890,6 @@ class _DewPointCard extends StatelessWidget {
                 margin: const EdgeInsets.symmetric(horizontal: 24),
               ),
 
-              // PPM Section
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -837,45 +919,42 @@ class _DewPointCard extends StatelessWidget {
 
           const Spacer(),
 
-          if (true) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 12.0),
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9), // Subtle grey background
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    "PERMITTED RANGE",
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                      color: dewLabelText.withOpacity(0.8),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _buildMinMax("Min", minVal),
-                      Container(
-                        width: 1,
-                        height: 24,
-                        color: const Color(0xFFCBD5E1),
-                      ), // Vertical divider
-                      _buildMinMax("Max", maxVal),
-                    ],
-                  ),
-                ],
-              ),
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 12.0),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
             ),
-          ],
+            child: Column(
+              children: [
+                Text(
+                  "PERMITTED RANGE",
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                    color: dewLabelText.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildMinMax("Min", minVal),
+                    Container(
+                      width: 1,
+                      height: 24,
+                      color: const Color(0xFFCBD5E1),
+                    ),
+                    _buildMinMax("Max", maxVal),
+                  ],
+                ),
+              ],
+            ),
+          ),
 
-          // Updated timestamp
           Align(
             alignment: Alignment.centerLeft,
             child: Text('Updated: $updatedAt', style: _updatedStyle),
@@ -887,14 +966,12 @@ class _DewPointCard extends StatelessWidget {
 
   Widget _buildMinMax(String label, String val) {
     final displayVal = val.isEmpty ? '--' : '$val °C';
-    // Check if value is actually empty or null to decide on styling
-    // But here we rely on text. Using a larger font for visibility.
     return Column(
       children: [
         Text(
           displayVal,
           style: TextStyle(
-            fontSize: 24, // Much larger for visibility from distance
+            fontSize: 24,
             fontWeight: FontWeight.w800,
             color: dewBigNumber,
           ),
@@ -908,6 +985,238 @@ class _DewPointCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ProcessSlipButton extends StatelessWidget {
+  final ProcessSlip slip;
+  final VoidCallback onToggle;
+
+  const _ProcessSlipButton({
+    required this.slip,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.extended(
+      onPressed: onToggle,
+      elevation: 4,
+      backgroundColor: const Color(0xFF0A66FF),
+      icon: const Icon(Icons.description_rounded, color: Colors.white),
+      label: Text(
+        "Current Slip (BC: ${slip.batteryCode})",
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProcessSlipContent extends StatelessWidget {
+  final ProcessSlip slip;
+  final String workstationName;
+  final bool showAll;
+  final VoidCallback onToggleShowAll;
+  final VoidCallback onClose;
+
+  const _ProcessSlipContent({
+    required this.slip,
+    required this.workstationName,
+    required this.showAll,
+    required this.onToggleShowAll,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: MediaQuery.of(context).size.width * 0.85,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 30,
+            spreadRadius: 5,
+            offset: const Offset(0, 15),
+          ),
+        ],
+        border: Border.all(color: const Color(0xFFE1E8FF), width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildHeader(),
+          const Divider(height: 1),
+          Flexible(
+            child: SingleChildScrollView(
+              child: _buildTable(context),
+            ),
+          ),
+          _buildFooter(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FAFF),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.assignment_rounded, color: Color(0xFF0A66FF), size: 28),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Process Identification Document (PID)",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1C3366),
+                ),
+              ),
+              Text(
+                "Battery Code: ${slip.batteryCode} | PID: ${slip.pidNumber} | CLN: ${slip.clnNumber}",
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF5A6B8A),
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          IconButton(
+            onPressed: onClose,
+            icon: const Icon(Icons.cancel_rounded, color: Colors.redAccent, size: 32),
+            tooltip: 'Close Slip',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTable(BuildContext context) {
+    final rowsToDisplay = showAll 
+        ? slip.rows 
+        : slip.rows.where((row) => _shouldHighlight(row.type)).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Table(
+        columnWidths: const {
+          0: FlexColumnWidth(2.2),
+          1: FlexColumnWidth(1.2),
+          2: FlexColumnWidth(1.0),
+          3: FlexColumnWidth(1.8),
+          4: FlexColumnWidth(1.8),
+          5: FlexColumnWidth(1.5),
+          6: FlexColumnWidth(1.5),
+        },
+        children: [
+          TableRow(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F4FF),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            children: [
+              _cell("Pellet Name", isHeader: true),
+              _cell("Lot No", isHeader: true),
+              _cell("Dia (mm)", isHeader: true),
+              _cell("Weight Range (g)", isHeader: true),
+              _cell("Thk Range (mm)", isHeader: true),
+              _cell("Pressure (kg/cm²)", isHeader: true),
+              _cell("Time (s)", isHeader: true),
+            ],
+          ),
+          ...rowsToDisplay.map((row) {
+            final isHighlighted = _shouldHighlight(row.type);
+            
+            final wtT = double.tryParse(row.wtT) ?? 0;
+            final wtTol = double.tryParse(row.wtTol) ?? 0;
+            final thT = double.tryParse(row.thT) ?? 0;
+            final thTol = double.tryParse(row.thTol) ?? 0;
+            
+            final wtRange = wtT > 0 ? "${(wtT - wtTol).toStringAsFixed(2)} - ${(wtT + wtTol).toStringAsFixed(2)}" : row.wtT;
+            final thRange = thT > 0 ? "${(thT - thTol).toStringAsFixed(2)} - ${(thT + thTol).toStringAsFixed(2)}" : row.thT;
+
+            return TableRow(
+              decoration: BoxDecoration(
+                color: isHighlighted ? const Color(0xFFFFF9C4) : null,
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              ),
+              children: [
+                _cell(row.name, isBold: isHighlighted),
+                _cell(row.lot),
+                _cell(row.dia),
+                _cell(wtRange),
+                _cell(thRange),
+                _cell(row.press),
+                _cell(row.time),
+              ],
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          TextButton.icon(
+            onPressed: onToggleShowAll,
+            icon: Icon(showAll ? Icons.filter_alt_off_rounded : Icons.filter_alt_rounded),
+            label: Text(showAll ? "Filter" : "Show All"),
+          ),
+          Text(
+            "Battery No(s): ${slip.batteryFrom} - ${slip.batteryTo}",
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0A66FF),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cell(String text, {bool isHeader = false, bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: isHeader ? 14 : 14,
+          fontWeight: isHeader || isBold ? FontWeight.bold : FontWeight.normal,
+          color: isHeader ? const Color(0xFF1C3366) : Colors.black87,
+        ),
+      ),
+    );
+  }
+
+  bool _shouldHighlight(String rowType) {
+    if (slip.workstationRoles.isEmpty) return false;
+    return slip.workstationRoles.any((mappedType) => 
+      rowType.toLowerCase().contains(mappedType.toLowerCase()) ||
+      mappedType.toLowerCase().contains(rowType.toLowerCase())
     );
   }
 }

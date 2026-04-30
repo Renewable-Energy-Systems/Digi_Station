@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import '../config/api_constants.dart';
 
 class ConfigService {
   static const String _keyMachineType = 'machine_type';
@@ -12,6 +15,8 @@ class ConfigService {
   };
 
   static const String _keyWorkstationId = 'workstation_id';
+  static const String _keyWorkstationRole = 'workstation_role';
+  static const String _keyUseProductionApi = 'use_production_api';
 
   Future<String?> getSavedMachineType() async {
     final prefs = await SharedPreferences.getInstance();
@@ -31,6 +36,50 @@ class ConfigService {
   Future<void> saveWorkstationId(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyWorkstationId, id);
+  }
+
+  Future<String?> getWorkstationRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyWorkstationRole);
+  }
+
+  Future<void> saveWorkstationRole(String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyWorkstationRole, role);
+  }
+
+  Future<bool> shouldUseProductionApi() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyUseProductionApi) ?? false;
+  }
+
+  Future<void> saveUseProductionApi(bool useProd) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyUseProductionApi, useProd);
+  }
+
+  Future<String> getOpsDigiBaseUrl() async {
+    final useProd = await shouldUseProductionApi();
+    return useProd 
+        ? ApiConstants.productionOpsDigiBaseUrl 
+        : ApiConstants.opsDigiBaseUrl;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchWorkstations() async {
+    try {
+      final baseUrl = await getOpsDigiBaseUrl();
+      final response = await http
+          .get(Uri.parse('$baseUrl/api_workstations.php'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        throw Exception('Server error: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Network error: $e');
+    }
   }
 
   // List of enabled Video IDs for this device
