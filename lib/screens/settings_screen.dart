@@ -17,11 +17,15 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with AutomaticKeepAliveClientMixin {
   final ConfigService _configService = ConfigService();
   final UpdateService _updateService = UpdateService();
   final ScreenConfigService _screenConfigService =
       ScreenConfigService(); // Service instance
+
+  @override
+  bool get wantKeepAlive => true;
 
   String? _selectedMachine;
   bool _isLoading = true;
@@ -286,229 +290,195 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      backgroundColor: const Color(0xFFF8FAFF),
+      appBar: AppBar(
+        title: const Text(
+          'System Settings',
+          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+        ),
+        elevation: 0,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
               children: [
-                // Screen Visibility Selection
-                const Text(
-                  'Screen Visibility',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Card(
+                // 1. Screen Visibility
+                _buildSectionHeader('LAYOUT & NAVIGATION', Icons.visibility_rounded),
+                _buildCard(
                   child: Column(
                     children: AppScreen.values.map((screen) {
-                      // Hide mandatory screens (Settings) - Home is now toggleable
-                      if (screen == AppScreen.settings)
-                        return const SizedBox.shrink();
-
+                      if (screen == AppScreen.settings) return const SizedBox.shrink();
                       final isEnabled = _enabledScreens.contains(screen);
                       return SwitchListTile(
-                        title: Text(_getScreenName(screen)),
+                        title: Text(
+                          _getScreenName(screen),
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        secondary: Icon(_getScreenIcon(screen), color: primaryColor, size: 22),
                         value: isEnabled,
+                        activeColor: primaryColor,
                         onChanged: (val) => _toggleScreen(screen, val),
                       );
                     }).toList(),
                   ),
                 ),
+
                 const SizedBox(height: 24),
 
-                const Text(
-                  'Select Machine Configuration',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Column(
-                      children: ConfigService.machineUrls.entries.map((entry) {
-                        return RadioListTile<String>(
-                          title: Text(entry.key),
-                          subtitle: Text(entry.value),
-                          value: entry.key,
-                          groupValue: _selectedMachine,
-                          onChanged: _saveSettings,
-                        );
-                      }).toList(),
-                    ),
+                // 2. Machine Configuration
+                _buildSectionHeader('HARDWARE CONFIGURATION', Icons.settings_input_component_rounded),
+                _buildCard(
+                  child: Column(
+                    children: ConfigService.machineUrls.entries.map((entry) {
+                      return RadioListTile<String>(
+                        title: Text(
+                          entry.key,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(entry.value, style: const TextStyle(fontSize: 12)),
+                        value: entry.key,
+                        groupValue: _selectedMachine,
+                        activeColor: primaryColor,
+                        onChanged: _saveSettings,
+                      );
+                    }).toList(),
                   ),
                 ),
-                const SizedBox(height: 24),
 
                 const SizedBox(height: 24),
 
-                const Text(
-                  'Workstation Configuration',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Workstation ID'),
-                            TextButton.icon(
-                              onPressed: () => setState(() => _isManualMode = !_isManualMode),
-                              icon: Icon(_isManualMode ? Icons.list_rounded : Icons.edit_rounded, size: 18),
-                              label: Text(_isManualMode ? 'Show List' : 'Enter Manually', style: const TextStyle(fontSize: 12)),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        if (_fetchError != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: Text(
-                              _fetchError!,
-                              style: const TextStyle(color: Colors.red, fontSize: 12),
-                            ),
+                // 3. Workstation Configuration
+                _buildSectionHeader('STATION & API SETTINGS', Icons.lan_rounded),
+                _buildCard(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Workstation Identity',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
-                        if (_isFetchingWorkstations)
-                          const LinearProgressIndicator()
-                        else if (_isManualMode || _workstations.isEmpty)
-                          Column(
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _workstationIdController,
-                                      decoration: const InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Enter ID (e.g. PRD-362)',
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton(
-                                    onPressed: _saveWorkstationId,
-                                    child: const Text('Save'),
-                                  ),
-                                  IconButton(
-                                    onPressed: _loadSettings,
-                                    icon: const Icon(Icons.refresh_rounded),
-                                    tooltip: 'Retry Loading List',
-                                  ),
-                                ],
+                          TextButton.icon(
+                            onPressed: () => setState(() => _isManualMode = !_isManualMode),
+                            icon: Icon(_isManualMode ? Icons.list_rounded : Icons.edit_rounded, size: 16),
+                            label: Text(_isManualMode ? 'Select from List' : 'Manual Entry', style: const TextStyle(fontSize: 11)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (_fetchError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(_fetchError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                        ),
+                      if (_isFetchingWorkstations)
+                        const LinearProgressIndicator()
+                      else if (_isManualMode || _workstations.isEmpty)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _workstationIdController,
+                                decoration: InputDecoration(
+                                  hintText: 'Enter ID (e.g. PRD-362)',
+                                  filled: true,
+                                  fillColor: Colors.blueGrey[50]!.withOpacity(0.5),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                  isDense: true,
+                                ),
                               ),
-                              if (_workstations.isEmpty && !_isFetchingWorkstations)
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 8.0),
-                                  child: Text(
-                                    'Notice: List is empty. Using manual entry.',
-                                    style: TextStyle(color: Colors.orange, fontSize: 11),
-                                  ),
-                                ),
-                            ],
-                          )
-                        else
-                          DropdownButtonFormField<String>(
-                            value: _workstations.any((w) => w['id'] == _workstationIdController.text)
-                                ? _workstationIdController.text
-                                : null,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              isDense: true,
                             ),
-                            items: _workstations.map((ws) {
-                              return DropdownMenuItem<String>(
-                                value: ws['id'],
-                                child: Text("${ws['id']} - ${ws['name']}"),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                _workstationIdController.text = val;
-                                _saveWorkstationId();
-                              }
-                            },
-                            hint: const Text('Select Workstation'),
-                          ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Source: ${ApiConstants.opsDigiBaseUrl}',
-                          style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
-                        ),
-                        const Divider(height: 32),
-                        
-                        // API Environment Switch
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'API Environment',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                ),
-                                Text(
-                                  'Choose between Local and Production Server',
-                                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                const Text('Local', style: TextStyle(fontSize: 12)),
-                                Switch(
-                                  value: _useProductionApi,
-                                  onChanged: (val) async {
-                                    await _configService.saveUseProductionApi(val);
-                                    setState(() => _useProductionApi = val);
-                                    _loadSettings(); // Reload workstations from new source
-                                    widget.onSettingsChanged?.call();
-                                  },
-                                ),
-                                const Text('Production', style: TextStyle(fontSize: 12)),
-                              ],
+                            const SizedBox(width: 10),
+                            ElevatedButton(
+                              onPressed: _saveWorkstationId,
+                              style: ElevatedButton.styleFrom(elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                              child: const Text('Save'),
                             ),
                           ],
+                        )
+                      else
+                        DropdownButtonFormField<String>(
+                          value: _workstations.any((w) => w['id'] == _workstationIdController.text) ? _workstationIdController.text : null,
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.blueGrey[50]!.withOpacity(0.5),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                            isDense: true,
+                          ),
+                          items: _workstations
+                              .map((ws) => DropdownMenuItem<String>(
+                                  value: ws['id'],
+                                  child: Text("${ws['id']} - ${ws['name']}")))
+                              .toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              _workstationIdController.text = val;
+                              _saveWorkstationId();
+                            }
+                          },
+                          hint: const Text('Select Workstation'),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _useProductionApi 
-                              ? 'Active: ${ApiConstants.productionOpsDigiBaseUrl}'
-                              : 'Active: ${ApiConstants.opsDigiBaseUrl}',
-                          style: const TextStyle(fontSize: 10, color: Colors.blueAccent),
+                      
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: Divider(),
+                      ),
+
+                      const Text(
+                        'API Environment',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey[50]!.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      ],
-                    ),
+                        child: Row(
+                          children: [
+                            _buildEnvToggle(false, 'LOCAL'),
+                            _buildEnvToggle(true, 'PRODUCTION'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _useProductionApi ? ApiConstants.productionOpsDigiBaseUrl : ApiConstants.opsDigiBaseUrl,
+                        style: TextStyle(fontSize: 10, color: primaryColor, fontWeight: FontWeight.w500),
+                      ),
+                    ],
                   ),
                 ),
+
                 const SizedBox(height: 24),
 
-                const Text(
-                  'Video Configuration',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Card(
+                // 4. Video Configuration
+                _buildSectionHeader('WORK INSTRUCTIONS', Icons.video_collection_rounded),
+                _buildCard(
                   child: Column(
                     children: WorkInstructionsConstants.allWis.map((wi) {
                       final isSelected = _selectedVideoIds.contains(wi.id);
                       return CheckboxListTile(
-                        title: Text(wi.title),
-                        subtitle: Text(wi.id),
+                        title: Text(wi.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                        subtitle: Text(wi.id, style: const TextStyle(fontSize: 12)),
                         value: isSelected,
+                        activeColor: primaryColor,
                         onChanged: (val) {
                           setState(() {
-                            if (val == true) {
-                              _selectedVideoIds.add(wi.id);
-                            } else {
-                              _selectedVideoIds.remove(wi.id);
-                            }
+                            if (val == true) _selectedVideoIds.add(wi.id);
+                            else _selectedVideoIds.remove(wi.id);
                           });
                           _saveVideoSelection();
                         },
@@ -516,57 +486,134 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     }).toList(),
                   ),
                 ),
+
                 const SizedBox(height: 24),
 
-                // Update Section
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'App Updates',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                // 5. App Updates
+                _buildSectionHeader('SYSTEM UPDATES', Icons.system_update_rounded),
+                _buildCard(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Firmware Version', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                              Text(_appVersion.isNotEmpty ? 'Build v$_appVersion' : 'Fetching version...', style: TextStyle(color: Colors.blueGrey[400], fontSize: 13)),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Current Version'),
-                          subtitle: Text(
-                            _appVersion.isNotEmpty ? _appVersion : 'Unknown',
-                          ),
-                          trailing: _isCheckingUpdate
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : ElevatedButton(
-                                  onPressed: _handleCheckForUpdates,
-                                  child: const Text('Check for Updates'),
-                                ),
-                        ),
-                        if (_updateStatus.isNotEmpty && !_isCheckingUpdate)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              _updateStatus,
-                              style: const TextStyle(color: Colors.red),
+                          if (_isCheckingUpdate)
+                            const CircularProgressIndicator(strokeWidth: 3)
+                          else
+                            ElevatedButton.icon(
+                              onPressed: _handleCheckForUpdates,
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('Check Now'),
+                              style: ElevatedButton.styleFrom(elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                             ),
-                          ),
-                      ],
-                    ),
+                        ],
+                      ),
+                      if (_updateStatus.isNotEmpty && !_isCheckingUpdate)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(_updateStatus, style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w500)),
+                        ),
+                    ],
                   ),
                 ),
               ],
             ),
     );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 0, 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.blueGrey[400]),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.blueGrey[400],
+              letterSpacing: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCard({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: Colors.blueGrey[50]!),
+      ),
+      child: Padding(
+        padding: padding ?? EdgeInsets.zero,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildEnvToggle(bool isProd, String label) {
+    final active = _useProductionApi == isProd;
+    final primaryColor = Theme.of(context).primaryColor;
+    
+    return Expanded(
+      child: GestureDetector(
+        onTap: () async {
+          if (_useProductionApi == isProd) return;
+          await _configService.saveUseProductionApi(isProd);
+          setState(() => _useProductionApi = isProd);
+          _loadSettings();
+          widget.onSettingsChanged?.call();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: active ? [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))] : null,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: active ? FontWeight.bold : FontWeight.w500,
+              color: active ? primaryColor : Colors.blueGrey[400],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _getScreenIcon(AppScreen s) {
+    switch (s) {
+      case AppScreen.webLogs:
+        return Icons.cloud_sync_rounded;
+      case AppScreen.home:
+        return Icons.dashboard_rounded;
+      case AppScreen.wiList:
+        return Icons.play_lesson_rounded;
+      case AppScreen.gauge:
+        return Icons.speed_rounded;
+      case AppScreen.detSelector:
+        return Icons.tune_rounded;
+      case AppScreen.settings:
+        return Icons.settings_rounded;
+    }
   }
 }
 

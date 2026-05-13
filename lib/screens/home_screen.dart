@@ -37,7 +37,10 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
         final sensorData = Map<String, dynamic>.from(j['sensor']);
         // Cache successful response
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('sensor_master_cache_$param', json.encode(sensorData));
+        await prefs.setString(
+          'sensor_master_cache_$param',
+          json.encode(sensorData),
+        );
         return sensorData;
       }
     }
@@ -166,12 +169,14 @@ class HomeScreenState extends State<HomeScreen>
   bool _isFetchingSlip = false;
   bool _showAllRows = false;
   final ProcessSlipService _slipService = ProcessSlipService();
+  DateTime? _slipFetchDate; // date when current slip was fetched
+  Timer? _midnightTimer; // timer to clear slip at midnight
 
   // Subscription tracking
   StreamSubscription? _msgSub;
   StreamSubscription? _statusSub;
   SocketConnectionState _connState = SocketConnectionState.disconnected;
-  
+
   http.Client? _sseClient;
 
   @override
@@ -192,6 +197,7 @@ class HomeScreenState extends State<HomeScreen>
     _msgSub?.cancel();
     _statusSub?.cancel();
     _sseClient?.close();
+    _midnightTimer?.cancel();
     super.dispose();
   }
 
@@ -227,7 +233,7 @@ class HomeScreenState extends State<HomeScreen>
     _statusSub?.cancel();
 
     final ss = SocketService();
-    
+
     // Initial state
     _connState = ss.wsState;
 
@@ -263,9 +269,9 @@ class HomeScreenState extends State<HomeScreen>
         // Only accept updates for currently selected column (robust)
         if (col != null && col == selectedDetColumn) {
           final dew = m['dewpoint_c'];
-          
-          if (dew != null && 
-              dew.toString().toLowerCase() != 'null' && 
+
+          if (dew != null &&
+              dew.toString().toLowerCase() != 'null' &&
               dew.toString().trim() != '') {
             final double? dewVal = double.tryParse(dew.toString());
             if (dewVal == 0.0) {
@@ -354,27 +360,39 @@ class HomeScreenState extends State<HomeScreen>
   Future<void> _listenToSlipUpdates() async {
     final baseUrl = await ConfigService().getOpsDigiBaseUrl();
     final url = Uri.parse('$baseUrl/api_slip_stream.php');
-    
+
     _sseClient?.close();
     _sseClient = http.Client();
     try {
       final request = http.Request('GET', url);
       final response = await _sseClient!.send(request);
 
-      response.stream.transform(utf8.decoder).listen((data) {
-        if (data.contains('slip_updated')) {
-          _refreshSlip(showErrors: false);
-        }
-      }, onDone: () {
-        // Reconnect when the server closes the connection (every 5 minutes)
-        if (mounted) {
-          Future.delayed(const Duration(seconds: 2), _listenToSlipUpdates);
-        }
-      }, onError: (e) {
-        if (mounted) {
-          Future.delayed(const Duration(seconds: 5), _listenToSlipUpdates);
-        }
-      });
+      response.stream
+          .transform(utf8.decoder)
+          .listen(
+            (data) {
+              if (data.contains('slip_updated')) {
+                _refreshSlip(showErrors: false);
+              }
+            },
+            onDone: () {
+              // Reconnect when the server closes the connection (every 5 minutes)
+              if (mounted) {
+                Future.delayed(
+                  const Duration(seconds: 2),
+                  _listenToSlipUpdates,
+                );
+              }
+            },
+            onError: (e) {
+              if (mounted) {
+                Future.delayed(
+                  const Duration(seconds: 5),
+                  _listenToSlipUpdates,
+                );
+              }
+            },
+          );
     } catch (e) {
       if (mounted) {
         Future.delayed(const Duration(seconds: 5), _listenToSlipUpdates);
@@ -384,19 +402,21 @@ class HomeScreenState extends State<HomeScreen>
 
   Future<void> _refreshSlip({bool showErrors = true}) async {
     if (_isFetchingSlip) return;
-    
+
     final workstationId = await ConfigService().getWorkstationId();
     if (workstationId == null || workstationId.isEmpty) return;
 
     if (mounted) setState(() => _isFetchingSlip = true);
-    
+
     try {
       final slip = await _slipService.fetchLatestSlip(workstationId);
       if (mounted) {
         setState(() {
           _currentSlip = slip;
+          _slipFetchDate = DateTime.now();
           _isFetchingSlip = false;
         });
+        _scheduleMidnightCheck();
       }
     } catch (e) {
       if (mounted) {
@@ -413,6 +433,32 @@ class HomeScreenState extends State<HomeScreen>
     }
   }
 
+  /// Check if the current slip is expired (fetched on a previous day)
+  bool get _isSlipExpired {
+    if (_slipFetchDate == null || _currentSlip == null) return false;
+    final now = DateTime.now();
+    return now.year != _slipFetchDate!.year ||
+        now.month != _slipFetchDate!.month ||
+        now.day != _slipFetchDate!.day;
+  }
+
+  /// Schedule a timer that fires at midnight to expire the current slip
+  void _scheduleMidnightCheck() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final duration = midnight.difference(now);
+    _midnightTimer = Timer(duration, () {
+      if (mounted) {
+        setState(() {}); // rebuild to show "No Production"
+        // Try fetching a new slip for the new day
+        _refreshSlip(showErrors: false);
+        // Schedule again for the next midnight
+        _scheduleMidnightCheck();
+      }
+    });
+  }
+
   @override
   bool get wantKeepAlive => true;
 
@@ -423,137 +469,155 @@ class HomeScreenState extends State<HomeScreen>
       children: [
         Container(
           decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [bgGradientTop, bgGradientBottom],
-        ),
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              // ===== Top App Bar =====
-              const _TopHeader(blueMain: blueMain),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [bgGradientTop, bgGradientBottom],
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                children: [
+                  // ===== Top App Bar =====
+                  const _TopHeader(blueMain: blueMain),
 
-              const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-              // ===== Main White Panel with 2 cards inside =====
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: panelBorder, width: 2),
+                  // ===== Main White Panel with 2 cards inside =====
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: panelBorder, width: 2),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 24,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isNarrow = constraints.maxWidth < 780;
+
+                          if (isNarrow) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _SensorCard(
+                                  headingText: headingText,
+                                  labelText: labelText,
+                                  valueText: valueText,
+                                  captionText: captionText,
+                                  cardBorder: cardBorder,
+                                  workstationName: workstationName,
+                                  probeId: probeId,
+                                  calibrationDate: calibrationDate,
+                                  calibrationDue: calibrationDue,
+                                  slip: _currentSlip,
+                                  isSlipExpired: _isSlipExpired,
+                                  onSlipTap: (_currentSlip != null && !_isSlipExpired)
+                                      ? () => setState(
+                                          () => _isSlipVisible = true,
+                                        )
+                                      : null,
+                                ),
+                                const SizedBox(height: 24),
+                                _DewPointCard(
+                                  dewBg: const Color(0xFFF4F8FF),
+                                  dewBorder: const Color(0xFFDFE8FF),
+                                  dewLabelText: const Color(0xFF1C3FAA),
+                                  dewBigNumber: const Color(0xFF0A66FF),
+                                  updatedAt: updatedAt,
+                                  dewPointDisplay: dewPointDisplay,
+                                  ppmDisplay: ppmDisplay,
+                                  minVal: minVal,
+                                  maxVal: maxVal,
+                                  isLive:
+                                      (_connState ==
+                                          SocketConnectionState.connected &&
+                                      dewPointDisplay != '-- °C'),
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Flexible(
+                                flex: 4,
+                                child: _SensorCard(
+                                  headingText: headingText,
+                                  labelText: labelText,
+                                  valueText: valueText,
+                                  captionText: captionText,
+                                  cardBorder: cardBorder,
+                                  workstationName: workstationName,
+                                  probeId: probeId,
+                                  calibrationDate: calibrationDate,
+                                  calibrationDue: calibrationDue,
+                                  slip: _currentSlip,
+                                  isSlipExpired: _isSlipExpired,
+                                  onSlipTap: (_currentSlip != null && !_isSlipExpired)
+                                      ? () => setState(
+                                          () => _isSlipVisible = true,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(width: 24),
+                              Flexible(
+                                flex: 4,
+                                child: _DewPointCard(
+                                  dewBg: const Color(0xFFF4F8FF),
+                                  dewBorder: const Color(0xFFDFE8FF),
+                                  dewLabelText: const Color(0xFF1C3FAA),
+                                  dewBigNumber: const Color(0xFF0A66FF),
+                                  updatedAt: updatedAt,
+                                  dewPointDisplay: dewPointDisplay,
+                                  ppmDisplay: ppmDisplay,
+                                  minVal: minVal,
+                                  maxVal: maxVal,
+                                  isLive:
+                                      (_connState ==
+                                          SocketConnectionState.connected &&
+                                      dewPointDisplay != '-- °C'),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
                   ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 24,
-                  ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isNarrow = constraints.maxWidth < 780;
 
-                      if (isNarrow) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _SensorCard(
-                              headingText: headingText,
-                              labelText: labelText,
-                              valueText: valueText,
-                              captionText: captionText,
-                              cardBorder: cardBorder,
-                              workstationName: workstationName,
-                              probeId: probeId,
-                              calibrationDate: calibrationDate,
-                              calibrationDue: calibrationDue,
-                            ),
-                            const SizedBox(height: 24),
-                            _DewPointCard(
-                              dewBg: const Color(0xFFF4F8FF),
-                              dewBorder: const Color(0xFFDFE8FF),
-                              dewLabelText: const Color(0xFF1C3FAA),
-                              dewBigNumber: const Color(0xFF0A66FF),
-                              updatedAt: updatedAt,
-                              dewPointDisplay: dewPointDisplay,
-                              ppmDisplay: ppmDisplay,
-                              minVal: minVal,
-                              maxVal: maxVal,
-                              isLive: (_connState == SocketConnectionState.connected && dewPointDisplay != '-- °C'),
-                            ),
-                          ],
-                        );
-                      }
+                  const SizedBox(height: 16),
 
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Flexible(
-                            flex: 4,
-                            child: _SensorCard(
-                              headingText: headingText,
-                              labelText: labelText,
-                              valueText: valueText,
-                              captionText: captionText,
-                              cardBorder: cardBorder,
-                              workstationName: workstationName,
-                              probeId: probeId,
-                              calibrationDate: calibrationDate,
-                              calibrationDue: calibrationDue,
-                            ),
-                          ),
-                          const SizedBox(width: 24),
-                          Flexible(
-                            flex: 4,
-                            child: _DewPointCard(
-                              dewBg: const Color(0xFFF4F8FF),
-                              dewBorder: const Color(0xFFDFE8FF),
-                              dewLabelText: const Color(0xFF1C3FAA),
-                              dewBigNumber: const Color(0xFF0A66FF),
-                              updatedAt: updatedAt,
-                              dewPointDisplay: dewPointDisplay,
-                              ppmDisplay: ppmDisplay,
-                              minVal: minVal,
-                              maxVal: maxVal,
-                              isLive: (_connState == SocketConnectionState.connected && dewPointDisplay != '-- °C'),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                  // ===== Bottom blue strip =====
+                  Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: blueMain,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
                   ),
-                ),
+                ],
               ),
-
-              const SizedBox(height: 16),
-
-              // ===== Bottom blue strip =====
-              Container(
-                height: 6,
-                decoration: BoxDecoration(
-                  color: blueMain,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
-    ),
-    
-    // --- Process Slip Overlay ---
+
+        // --- Process Slip Overlay ---
         if (_isSlipVisible)
           Positioned.fill(
             child: GestureDetector(
               onTap: () => setState(() => _isSlipVisible = false),
-              child: Container(
-                color: Colors.black.withOpacity(0.5),
-              ),
+              child: Container(color: Colors.black.withOpacity(0.5)),
             ),
           ),
-        
+
         // --- Centered Slip Content ---
         if (_currentSlip != null && _isSlipVisible)
           Center(
@@ -563,22 +627,14 @@ class HomeScreenState extends State<HomeScreen>
                 slip: _currentSlip!,
                 workstationName: workstationName,
                 showAll: _showAllRows,
-                onToggleShowAll: () => setState(() => _showAllRows = !_showAllRows),
+                onToggleShowAll: () =>
+                    setState(() => _showAllRows = !_showAllRows),
                 onClose: () => setState(() => _isSlipVisible = false),
               ),
             ),
           ),
 
-        // --- Process Slip Button (Only visible when NOT open) ---
-        if (_currentSlip != null && !_isSlipVisible)
-          Positioned(
-            right: 24,
-            bottom: 24,
-            child: _ProcessSlipButton(
-              slip: _currentSlip!,
-              onToggle: () => setState(() => _isSlipVisible = true),
-            ),
-          ),
+        // (Process Slip info is now inline in the Sensor Card)
       ],
     );
   }
@@ -653,6 +709,9 @@ class _SensorCard extends StatelessWidget {
     required this.probeId,
     required this.calibrationDate,
     required this.calibrationDue,
+    this.slip,
+    this.isSlipExpired = false,
+    this.onSlipTap,
   });
 
   final Color headingText;
@@ -665,6 +724,9 @@ class _SensorCard extends StatelessWidget {
   final String probeId;
   final String calibrationDate;
   final String calibrationDue;
+  final ProcessSlip? slip;
+  final bool isSlipExpired;
+  final VoidCallback? onSlipTap;
 
   TextStyle get _headingStyle =>
       TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: headingText);
@@ -720,9 +782,10 @@ class _SensorCard extends StatelessWidget {
           _twoColRow('Calibration Date:', calibrationDate),
           const SizedBox(height: 16),
           _twoColRow('Calibration Due:', calibrationDue),
-          const SizedBox(height: 24),
           const Spacer(),
-          // NOTE: Removed Updated: from this card (user requested)
+          // Current Process Details inline card (only when workstation is selected)
+          if (slip != null && !isSlipExpired) _buildSlipCard(),
+          if (isSlipExpired) _buildNoProductionCard(),
         ],
       ),
     );
@@ -736,6 +799,153 @@ class _SensorCard extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(flex: 3, child: Text(value, style: _valueStyle)),
       ],
+    );
+  }
+
+  Widget _buildSlipCard() {
+    final s = slip!;
+    return GestureDetector(
+      onTap: onSlipTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0A66FF), Color(0xFF0052D4)],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0A66FF).withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Icon
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.assignment_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Title + BC
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "Current Process Details",
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.7),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    "BTY Code: ${s.batteryCode}  •  BTY No(s): ${s.batteryFrom} – ${s.batteryTo}",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      letterSpacing: 0.2,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Arrow
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: Colors.white,
+                size: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoProductionCard() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF78909C), Color(0xFF546E7A)],
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.pause_circle_outline_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "Production Status",
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                const Text(
+                  "No Production",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -810,10 +1020,8 @@ class _DewPointCard extends StatelessWidget {
     color: Color(0xFF7A8AA6),
   );
 
-  TextStyle get _minMaxLabelStyle => TextStyle(
-    fontSize: 14,
-    fontWeight: FontWeight.w600,
-  );
+  TextStyle get _minMaxLabelStyle =>
+      TextStyle(fontSize: 14, fontWeight: FontWeight.w600);
 
   @override
   Widget build(BuildContext context) {
@@ -856,40 +1064,48 @@ class _DewPointCard extends StatelessWidget {
               const SizedBox(width: 8),
               Text('Dew Point / PPMv', style: _headingStyle),
               const Spacer(),
-               Container(
-                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                 decoration: BoxDecoration(
-                   color: isLive ? const Color(0xFFE8F5E9) : const Color(0xFFF5F5F5),
-                   borderRadius: BorderRadius.circular(12),
-                   border: Border.all(
-                     color: isLive ? const Color(0xFF4CAF50) : const Color(0xFFBDBDBD),
-                     width: 1,
-                   ),
-                 ),
-                 child: Row(
-                   mainAxisSize: MainAxisSize.min,
-                   children: [
-                     Container(
-                       width: 8,
-                       height: 8,
-                       decoration: BoxDecoration(
-                         color: isLive ? const Color(0xFF2E7D32) : const Color(0xFF757575),
-                         shape: BoxShape.circle,
-                       ),
-                     ),
-                     const SizedBox(width: 6),
-                     Text(
-                       isLive ? 'LIVE' : 'OFFLINE',
-                       style: TextStyle(
-                         fontSize: 12,
-                         fontWeight: FontWeight.w700,
-                         color: isLive ? const Color(0xFF2E7D32) : const Color(0xFF757575),
-                         letterSpacing: 0.5,
-                       ),
-                     ),
-                   ],
-                 ),
-               ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isLive
+                      ? const Color(0xFFE8F5E9)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isLive
+                        ? const Color(0xFF4CAF50)
+                        : const Color(0xFFBDBDBD),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: isLive
+                            ? const Color(0xFF2E7D32)
+                            : const Color(0xFF757575),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isLive ? 'LIVE' : 'OFFLINE',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: isLive
+                            ? const Color(0xFF2E7D32)
+                            : const Color(0xFF757575),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
 
@@ -920,7 +1136,7 @@ class _DewPointCard extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               Container(
                 height: 50,
                 width: 2,
@@ -995,7 +1211,7 @@ class _DewPointCard extends StatelessWidget {
 
           Align(
             alignment: Alignment.centerLeft,
-            child: Text('Updated: $updatedAt', style: _updatedStyle),
+            child: Text('Updated At: $updatedAt', style: _updatedStyle),
           ),
         ],
       ),
@@ -1027,28 +1243,175 @@ class _DewPointCard extends StatelessWidget {
   }
 }
 
-class _ProcessSlipButton extends StatelessWidget {
+class _ProcessSlipButton extends StatefulWidget {
   final ProcessSlip slip;
   final VoidCallback onToggle;
 
-  const _ProcessSlipButton({
-    required this.slip,
-    required this.onToggle,
-  });
+  const _ProcessSlipButton({required this.slip, required this.onToggle});
+
+  @override
+  State<_ProcessSlipButton> createState() => _ProcessSlipButtonState();
+}
+
+class _ProcessSlipButtonState extends State<_ProcessSlipButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FloatingActionButton.extended(
-      onPressed: onToggle,
-      elevation: 4,
-      backgroundColor: const Color(0xFF0A66FF),
-      icon: const Icon(Icons.description_rounded, color: Colors.white),
-      label: Text(
-        "Current Slip (BC: ${slip.batteryCode})",
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: 16,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onToggle,
+        borderRadius: BorderRadius.circular(16),
+        splashColor: Colors.white24,
+        child: AnimatedBuilder(
+          animation: _pulseAnimation,
+          builder: (context, child) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF0A66FF),
+                    Color(0xFF0052D4),
+                    Color(0xFF1A3A8A),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(
+                      0xFF0A66FF,
+                    ).withOpacity(0.25 + (_pulseAnimation.value * 0.15)),
+                    blurRadius: 16 + (_pulseAnimation.value * 8),
+                    spreadRadius: 0,
+                    offset: const Offset(0, 4),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.12),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: child,
+            );
+          },
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Icon badge
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.assignment_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 14),
+              // Text content
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "Current Process Details",
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.75),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    "BTY Code: ${widget.slip.batteryCode}",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 14),
+              // Separator
+              Container(
+                width: 1,
+                height: 28,
+                color: Colors.white.withOpacity(0.2),
+              ),
+              const SizedBox(width: 14),
+              // Battery No badge
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.2),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  "BTY NO: ${widget.slip.batteryFrom} - ${widget.slip.batteryTo}",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Arrow indicator
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: Colors.white,
+                  size: 14,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1092,11 +1455,7 @@ class _ProcessSlipContent extends StatelessWidget {
         children: [
           _buildHeader(),
           const Divider(height: 1),
-          Flexible(
-            child: SingleChildScrollView(
-              child: _buildTable(context),
-            ),
-          ),
+          Flexible(child: SingleChildScrollView(child: _buildTable(context))),
           _buildFooter(),
         ],
       ),
@@ -1112,7 +1471,11 @@ class _ProcessSlipContent extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.assignment_rounded, color: Color(0xFF0A66FF), size: 28),
+          const Icon(
+            Icons.assignment_rounded,
+            color: Color(0xFF0A66FF),
+            size: 28,
+          ),
           const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1138,7 +1501,11 @@ class _ProcessSlipContent extends StatelessWidget {
           const Spacer(),
           IconButton(
             onPressed: onClose,
-            icon: const Icon(Icons.cancel_rounded, color: Colors.redAccent, size: 32),
+            icon: const Icon(
+              Icons.cancel_rounded,
+              color: Colors.redAccent,
+              size: 32,
+            ),
             tooltip: 'Close Slip',
           ),
         ],
@@ -1147,8 +1514,8 @@ class _ProcessSlipContent extends StatelessWidget {
   }
 
   Widget _buildTable(BuildContext context) {
-    final rowsToDisplay = showAll 
-        ? slip.rows 
+    final rowsToDisplay = showAll
+        ? slip.rows
         : slip.rows.where((row) => _shouldHighlight(row.type)).toList();
 
     return Container(
@@ -1181,14 +1548,18 @@ class _ProcessSlipContent extends StatelessWidget {
           ),
           ...rowsToDisplay.map((row) {
             final isHighlighted = _shouldHighlight(row.type);
-            
+
             final wtT = double.tryParse(row.wtT) ?? 0;
             final wtTol = double.tryParse(row.wtTol) ?? 0;
             final thT = double.tryParse(row.thT) ?? 0;
             final thTol = double.tryParse(row.thTol) ?? 0;
-            
-            final wtRange = wtT > 0 ? "${(wtT - wtTol).toStringAsFixed(2)} - ${(wtT + wtTol).toStringAsFixed(2)}" : row.wtT;
-            final thRange = thT > 0 ? "${(thT - thTol).toStringAsFixed(2)} - ${(thT + thTol).toStringAsFixed(2)}" : row.thT;
+
+            final wtRange = wtT > 0
+                ? "${(wtT - wtTol).toStringAsFixed(2)} - ${(wtT + wtTol).toStringAsFixed(2)}"
+                : row.wtT;
+            final thRange = thT > 0
+                ? "${(thT - thTol).toStringAsFixed(2)} - ${(thT + thTol).toStringAsFixed(2)}"
+                : row.thT;
 
             return TableRow(
               decoration: BoxDecoration(
@@ -1219,7 +1590,9 @@ class _ProcessSlipContent extends StatelessWidget {
         children: [
           TextButton.icon(
             onPressed: onToggleShowAll,
-            icon: Icon(showAll ? Icons.filter_alt_off_rounded : Icons.filter_alt_rounded),
+            icon: Icon(
+              showAll ? Icons.filter_alt_off_rounded : Icons.filter_alt_rounded,
+            ),
             label: Text(showAll ? "Filter" : "Show All"),
           ),
           Text(
@@ -1252,9 +1625,10 @@ class _ProcessSlipContent extends StatelessWidget {
 
   bool _shouldHighlight(String rowType) {
     if (slip.workstationRoles.isEmpty) return false;
-    return slip.workstationRoles.any((mappedType) => 
-      rowType.toLowerCase().contains(mappedType.toLowerCase()) ||
-      mappedType.toLowerCase().contains(rowType.toLowerCase())
+    return slip.workstationRoles.any(
+      (mappedType) =>
+          rowType.toLowerCase().contains(mappedType.toLowerCase()) ||
+          mappedType.toLowerCase().contains(rowType.toLowerCase()),
     );
   }
 }

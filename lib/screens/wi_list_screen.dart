@@ -16,10 +16,14 @@ class WIListScreen extends StatefulWidget {
   State<WIListScreen> createState() => _WIListScreenState();
 }
 
-class _WIListScreenState extends State<WIListScreen> {
+class _WIListScreenState extends State<WIListScreen>
+    with AutomaticKeepAliveClientMixin {
   // Configured videos (Map logic removed in favor of Settings config)
   List<WorkInstruction> _currentWis = [];
   bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -57,6 +61,7 @@ class _WIListScreenState extends State<WIListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
