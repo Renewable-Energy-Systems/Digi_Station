@@ -73,7 +73,11 @@ def github_upload(token, tag, apk_path):
         "tag_name": tag,
         "target_commitish": "main",
         "name": f"{tag}",
-        "body": "### Improvements (v2.0.3)\n- **Auto-Resume & Re-subscription**: WebSocket connection now automatically restores and re-subscribes to the active detector after a server restart.\n- **Dual-Stack Socket Service**: Unified Native WebSockets (Dewpoint) and Socket.IO (Gauges/RPi) into a single optimized manager.\n- **UI Stability**: Fixed missing Max values and restored range-based color logic (Green/Red).\n- **Centralized Synchronization**: Eliminated redundant connection management and fixed JSON parsing errors.",
+        "body": f"### Improvements ({tag})\n"
+                "- **Real-time Sync**: Implemented SSE listener for instant process slip updates.\n"
+                "- **UI & Performance**: Optimized dashboard for tablet operation and modernized the interface.\n"
+                "- **Bug Fixes**: Fixed workstation dropdown bugs and resolved bottom overflow UI issues.\n"
+                "- **Stability**: Updated API constants and improved process slip loading reliability.",
         "draft": False,
         "prerelease": False
     }
