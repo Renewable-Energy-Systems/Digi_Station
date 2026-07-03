@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -17,7 +18,7 @@ class UpdateService {
       final Uri url = Uri.parse(
         'https://api.github.com/repos/$_repoOwner/$_repoName/releases/latest',
       );
-      print('Checking GitHub update: $url');
+      debugPrint('Checking GitHub update: $url');
 
       final token = ConfigService.gitHubToken;
       final Map<String, String> headers = {
@@ -31,7 +32,7 @@ class UpdateService {
           .get(url, headers: headers)
           .timeout(const Duration(seconds: 10));
 
-      print('Response: ${response.statusCode}');
+      debugPrint('Response: ${response.statusCode}');
       if (response.statusCode == 200) {
         // GitHub returns pure UTF-8, no BOM usually, but we stick to utf8 decoding just in case
         final data = json.decode(utf8.decode(response.bodyBytes));
@@ -39,8 +40,9 @@ class UpdateService {
         // 1. Get Version (tag_name)
         String latestVersion = data['tag_name'];
         // Remove 'v' prefix if present common in git tags (e.g. v1.0.0)
-        if (latestVersion.startsWith('v'))
+        if (latestVersion.startsWith('v')) {
           latestVersion = latestVersion.substring(1);
+        }
 
         // 2. Get APK Asset
         final assets = data['assets'] as List;
@@ -65,7 +67,7 @@ class UpdateService {
         final packageInfo = await PackageInfo.fromPlatform();
         final currentVersion = packageInfo.version;
 
-        print('Current: $currentVersion, Latest: $latestVersion');
+        debugPrint('Current: $currentVersion, Latest: $latestVersion');
 
         if (_isNewer(latestVersion, currentVersion)) {
           return {
@@ -105,7 +107,7 @@ class UpdateService {
         return {'error': 'GitHub API Error: ${response.statusCode}'};
       }
     } catch (e) {
-      print('Update check failed: $e');
+      debugPrint('Update check failed: $e');
       return {'error': e.toString()};
     }
   }
@@ -124,7 +126,7 @@ class UpdateService {
         if (lv < cv) return false;
       }
     } catch (e) {
-      print('Version parse error: $e');
+      debugPrint('Version parse error: $e');
     }
     return false;
   }

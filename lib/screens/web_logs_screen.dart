@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import '../socket_service.dart'; 
+import '../socket_service.dart';
 import '../services/config_service.dart';
+import '../services/ui_state.dart';
 
 class WebLogsScreen extends StatefulWidget {
-  const WebLogsScreen({super.key});
+  final int pageIndex;
+
+  const WebLogsScreen({super.key, this.pageIndex = -1});
 
   @override
   State<WebLogsScreen> createState() => _WebLogsScreenState();
@@ -16,6 +19,7 @@ class _WebLogsScreenState extends State<WebLogsScreen>
   late final WebViewController _controller;
   bool _isLoading = true;
   StreamSubscription? _gaugeSub;
+  String? _lastInjected;
 
   @override
   void initState() {
@@ -23,6 +27,11 @@ class _WebLogsScreenState extends State<WebLogsScreen>
 
     // 1. Subscribe to the Gauge Stream
     _gaugeSub = SocketService().gaugeStream.listen((data) {
+      // Only inject while this screen is actually the visible page — otherwise
+      // this runs a platform-channel JS call on every gauge tick in the
+      // background and starves whichever screen the user is really on.
+      if (kioskActivePageIndex.value != widget.pageIndex) return;
+
       String? newValue;
 
       if (data.containsKey('height')) {
@@ -33,7 +42,9 @@ class _WebLogsScreenState extends State<WebLogsScreen>
         newValue = data['value'].toString();
       }
 
-      if (newValue != null && !_isLoading) {
+      // Skip if unchanged so we don't hammer the WebView with identical writes.
+      if (newValue != null && newValue != _lastInjected && !_isLoading) {
+        _lastInjected = newValue;
         _injectValueIntoWeb(newValue);
       }
     });

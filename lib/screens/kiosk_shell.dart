@@ -1,9 +1,9 @@
 // lib/screens/kiosk_shell.dart
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:flutter/services.dart'; // Added for SystemChannels
 import '../services/screen_config_service.dart'; // Import config service
+import '../services/ui_state.dart';
 
 // use prefixes to avoid name collisions and make it explicit
 import 'web_logs_screen.dart' show WebLogsScreen;
@@ -38,6 +38,18 @@ class _KioskShellState extends State<KioskShell> {
   final GlobalKey<home.HomeScreenState> _homeKey =
       GlobalKey<home.HomeScreenState>();
 
+  // GlobalKey to refresh the GaugeScreen when the user navigates back to it,
+  // so hardware-configuration changes apply without an app restart.
+  final GlobalKey<gauge.GaugeScreenState> _gaugeKey =
+      GlobalKey<gauge.GaugeScreenState>();
+  int _gaugeIndex = -1;
+
+  // GlobalKey to deep-link into a specific Settings section, and the index of
+  // the Sensor Configuration (DET selector) page for guiding the user there.
+  final GlobalKey<SettingsScreenState> _settingsKey =
+      GlobalKey<SettingsScreenState>();
+  int _detSelectorIndex = -1;
+
   @override
   void initState() {
     super.initState();
@@ -51,21 +63,42 @@ class _KioskShellState extends State<KioskShell> {
     final List<Widget> pages = [];
     int homeIndex = 0;
     int settingsIndex = -1;
+    _gaugeIndex = -1;
+    _detSelectorIndex = -1;
 
     for (final screen in enabledScreens) {
       switch (screen) {
         case AppScreen.webLogs:
-          pages.add(WebLogsScreen());
+          pages.add(WebLogsScreen(pageIndex: pages.length));
           break;
         case AppScreen.home:
-          pages.add(home.HomeScreen(key: _homeKey));
+          pages.add(
+            home.HomeScreen(
+              key: _homeKey,
+              onNavigateToSensorConfig: _goToSensorConfigPage,
+            ),
+          );
           homeIndex = pages.length - 1;
           break;
         case AppScreen.wiList:
-          pages.add(WIListScreen(onNavigateToSettings: _goToSettingsPage));
+          pages.add(
+            WIListScreen(
+              onNavigateToSettings: () => _goToSettingsPage(
+                section: SettingsScreen.sectionWorkInstructions,
+              ),
+            ),
+          );
           break;
         case AppScreen.gauge:
-          pages.add(gauge.GaugeScreen());
+          pages.add(
+            gauge.GaugeScreen(
+              key: _gaugeKey,
+              onNavigateToSettings: () => _goToSettingsPage(
+                section: SettingsScreen.sectionMachine,
+              ),
+            ),
+          );
+          _gaugeIndex = pages.length - 1;
           break;
         case AppScreen.detSelector:
           pages.add(
@@ -76,10 +109,12 @@ class _KioskShellState extends State<KioskShell> {
               },
             ),
           );
+          _detSelectorIndex = pages.length - 1;
           break;
         case AppScreen.settings:
           pages.add(
             SettingsScreen(
+              key: _settingsKey,
               onSettingsChanged: () => _initPages(stayOnSettings: true),
             ),
           );
@@ -103,7 +138,7 @@ class _KioskShellState extends State<KioskShell> {
             ? settingsIndex
             : homeIndex;
 
-        print(
+        debugPrint(
           'KioskShell: stay=$stayOnSettings, settingsIdx=$settingsIndex, homeIdx=$homeIndex, target=$_pageIndex',
         );
 
@@ -113,6 +148,7 @@ class _KioskShellState extends State<KioskShell> {
         // We already have logic in dispose/build.
         // It's safer to recreate controller to ensure initialPage is correct.
         _controller = PageController(initialPage: _pageIndex);
+        kioskActivePageIndex.value = _pageIndex;
         _isLoading = false;
       });
     }
@@ -183,17 +219,23 @@ class _KioskShellState extends State<KioskShell> {
     );
   }
 
-  Future<void> _goToSettingsPage() async {
+  Future<void> _goToSettingsPage({int? section}) async {
     final enabledScreens = await _screenConfigService.getEnabledScreens();
-    // Assuming settings is always in the list if enabled, or maybe force enable?
-    // User wants to go to settings.
     int index = enabledScreens.indexOf(AppScreen.settings);
     if (index != -1) {
       _goTo(index, animate: false);
-    } else {
-      // If settings is disabled (which shouldn't happen based on our logic, but safe to check)
-      // Maybe enable it temporarily? Or show error?
-      // For now, assume it's there.
+      if (section != null) {
+        // Defer until the Settings page is built/visible so its state exists.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _settingsKey.currentState?.openSection(section);
+        });
+      }
+    }
+  }
+
+  void _goToSensorConfigPage() {
+    if (_detSelectorIndex != -1) {
+      _goTo(_detSelectorIndex);
     }
   }
 
@@ -207,6 +249,13 @@ class _KioskShellState extends State<KioskShell> {
     setState(() {
       _pageIndex = index;
     });
+    kioskActivePageIndex.value = index;
+
+    // Re-apply hardware configuration when returning to the gauge screen so
+    // changes made in Settings take effect without an app restart.
+    if (index == _gaugeIndex) {
+      _gaugeKey.currentState?.refreshConfig();
+    }
 
     if (animate) {
       _controller.animateToPage(
@@ -296,11 +345,11 @@ class _NavButton extends StatelessWidget {
           width: 60,
           height: 60,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.8),
+            color: Colors.white.withValues(alpha: 0.8),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 8,
                 spreadRadius: 2,
               ),

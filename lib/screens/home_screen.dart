@@ -11,6 +11,7 @@ import '../socket_service.dart';
 import '../models/process_slip_model.dart';
 import '../services/process_slip_service.dart';
 import '../services/config_service.dart';
+import '../services/voice_alert_service.dart';
 
 // Helper: parse DET -> ParameterNo (keeps compatibility with det_selector)
 int? detToParamNumber(String detName) {
@@ -31,7 +32,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     ).replace(queryParameters: {'param': param.toString()});
     final resp = await http.get(uri).timeout(const Duration(seconds: 6));
     if (resp.statusCode == 200) {
-      print('[DEBUG] sensorinfo response: ${resp.body}'); // Added debug log
+      debugPrint('[DEBUG] sensorinfo response: ${resp.body}'); // Added debug log
       final j = json.decode(resp.body);
       if (j is Map && j['found'] == true && j['sensor'] is Map) {
         final sensorData = Map<String, dynamic>.from(j['sensor']);
@@ -45,7 +46,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
       }
     }
   } catch (e) {
-    print('fetchSensorInfoFromServerByParam error: $e');
+    debugPrint('fetchSensorInfoFromServerByParam error: $e');
   }
 
   // Fallback to cache if network request fails
@@ -53,11 +54,11 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     final prefs = await SharedPreferences.getInstance();
     final cached = prefs.getString('sensor_master_cache_$param');
     if (cached != null) {
-      print('[DEBUG] using cached sensorinfo for param $param');
+      debugPrint('[DEBUG] using cached sensorinfo for param $param');
       return Map<String, dynamic>.from(json.decode(cached));
     }
   } catch (e) {
-    print('fetchSensorInfoFromServerByParam cache error: $e');
+    debugPrint('fetchSensorInfoFromServerByParam cache error: $e');
   }
 
   return null;
@@ -123,7 +124,9 @@ Future<Map<String, String>> getEffectiveSensorInfo(
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final VoidCallback? onNavigateToSensorConfig;
+
+  const HomeScreen({super.key, this.onNavigateToSensorConfig});
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -163,6 +166,17 @@ class HomeScreenState extends State<HomeScreen>
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (C)';
 
+  // Whether a sensor/DET has been explicitly configured for this station.
+  // Until then the home screen shows a "Configure sensor" guide instead of
+  // placeholder Probe ID / permitted-range values.
+  bool _sensorConfigured = false;
+
+  // Spoken dew-point out-of-range alerts (female TTS voice).
+  final VoiceAlertService _voiceAlert = VoiceAlertService();
+  bool _dewOutOfRangeActive = false;
+  DateTime? _lastDewVoiceAlert;
+  static const Duration _dewVoiceInterval = Duration(seconds: 15);
+
   // Process Slip State
   ProcessSlip? _currentSlip;
   bool _isSlipVisible = false;
@@ -182,6 +196,7 @@ class HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    _voiceAlert.init();
     _initAll();
   }
 
@@ -198,7 +213,20 @@ class HomeScreenState extends State<HomeScreen>
     _statusSub?.cancel();
     _sseClient?.close();
     _midnightTimer?.cancel();
+    _voiceAlert.stop();
     super.dispose();
+  }
+
+  bool _logoPrecached = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_logoPrecached) {
+      _logoPrecached = true;
+      // Decode the header logo ahead of first paint to avoid a flash-in.
+      precacheImage(const AssetImage('assets/res_logo.png'), context);
+    }
   }
 
   Future<void> _loadSelectedDetAndSensorInfo() async {
@@ -210,6 +238,7 @@ class HomeScreenState extends State<HomeScreen>
     final info = await getEffectiveSensorInfo(selectedDetColumn, apiHost);
     if (mounted) {
       setState(() {
+        _sensorConfigured = savedDet != null;
         workstationName = info['workstation'] ?? '';
         probeId = info['probeId'] ?? '';
         calibrationDate = info['calibrationDate'] ?? '';
@@ -314,15 +343,49 @@ class HomeScreenState extends State<HomeScreen>
               updatedAt = updated;
               status = 'ok';
             });
+            _checkDewPointAlert();
           }
         }
-      } else if (m is Map && m['type'] == 'columns') {
+      } else if (m['type'] == 'columns') {
         // ignore for now
-      } else if (m is Map && m['type'] == 'subscribed') {
-        print('[WS] subscribed: ${m['col']}');
+      } else if (m['type'] == 'subscribed') {
+        debugPrint('[WS] subscribed: ${m['col']}');
       }
     } catch (e) {
-      print('[WS] message processing error: $e -- data: $msg');
+      debugPrint('[WS] message processing error: $e -- data: $msg');
+    }
+  }
+
+  /// Speaks a warning (debounced) whenever the live dew point is outside the
+  /// permitted [minVal, maxVal] range. Re-entering the range re-arms it so the
+  /// next excursion alerts immediately.
+  void _checkDewPointAlert() {
+    final val = double.tryParse(
+      dewPointDisplay.replaceAll(RegExp(r'[^0-9.-]'), ''),
+    );
+    final min = double.tryParse(minVal);
+    final max = double.tryParse(maxVal);
+
+    // Need a live reading and a configured range to judge.
+    if (val == null || min == null || max == null) {
+      _dewOutOfRangeActive = false;
+      return;
+    }
+
+    final outOfRange = val < min || val > max;
+    if (!outOfRange) {
+      _dewOutOfRangeActive = false;
+      return;
+    }
+
+    final now = DateTime.now();
+    final due =
+        _lastDewVoiceAlert == null ||
+        now.difference(_lastDewVoiceAlert!) > _dewVoiceInterval;
+    if (!_dewOutOfRangeActive || due) {
+      _dewOutOfRangeActive = true;
+      _lastDewVoiceAlert = now;
+      _voiceAlert.speakDewPointOutOfRange();
     }
   }
 
@@ -338,6 +401,7 @@ class HomeScreenState extends State<HomeScreen>
     final info = await getEffectiveSensorInfo(selectedDetColumn, apiHost);
     if (mounted) {
       setState(() {
+        _sensorConfigured = savedDet != null;
         workstationName = info['workstation'] ?? '';
         probeId = info['probeId'] ?? '';
         calibrationDate = info['calibrationDate'] ?? '';
@@ -511,6 +575,8 @@ class HomeScreenState extends State<HomeScreen>
                                   valueText: valueText,
                                   captionText: captionText,
                                   cardBorder: cardBorder,
+                                  configured: _sensorConfigured,
+                                  onConfigure: widget.onNavigateToSensorConfig,
                                   workstationName: workstationName,
                                   probeId: probeId,
                                   calibrationDate: calibrationDate,
@@ -534,6 +600,7 @@ class HomeScreenState extends State<HomeScreen>
                                   ppmDisplay: ppmDisplay,
                                   minVal: minVal,
                                   maxVal: maxVal,
+                                  showRange: _sensorConfigured,
                                   isLive:
                                       (_connState ==
                                           SocketConnectionState.connected &&
@@ -554,6 +621,8 @@ class HomeScreenState extends State<HomeScreen>
                                   valueText: valueText,
                                   captionText: captionText,
                                   cardBorder: cardBorder,
+                                  configured: _sensorConfigured,
+                                  onConfigure: widget.onNavigateToSensorConfig,
                                   workstationName: workstationName,
                                   probeId: probeId,
                                   calibrationDate: calibrationDate,
@@ -580,6 +649,7 @@ class HomeScreenState extends State<HomeScreen>
                                   ppmDisplay: ppmDisplay,
                                   minVal: minVal,
                                   maxVal: maxVal,
+                                  showRange: _sensorConfigured,
                                   isLive:
                                       (_connState ==
                                           SocketConnectionState.connected &&
@@ -614,7 +684,7 @@ class HomeScreenState extends State<HomeScreen>
           Positioned.fill(
             child: GestureDetector(
               onTap: () => setState(() => _isSlipVisible = false),
-              child: Container(color: Colors.black.withOpacity(0.5)),
+              child: Container(color: Colors.black.withValues(alpha: 0.5)),
             ),
           ),
 
@@ -709,6 +779,8 @@ class _SensorCard extends StatelessWidget {
     required this.probeId,
     required this.calibrationDate,
     required this.calibrationDue,
+    this.configured = true,
+    this.onConfigure,
     this.slip,
     this.isSlipExpired = false,
     this.onSlipTap,
@@ -719,6 +791,9 @@ class _SensorCard extends StatelessWidget {
   final Color valueText;
   final Color captionText;
   final Color cardBorder;
+
+  final bool configured;
+  final VoidCallback? onConfigure;
 
   final String workstationName;
   final String probeId;
@@ -775,17 +850,21 @@ class _SensorCard extends StatelessWidget {
         children: [
           Text('Sensor Information', style: _headingStyle),
           const SizedBox(height: 24),
-          _twoColRow('Workstation name:', workstationName),
-          const SizedBox(height: 16),
-          _twoColRow('Probe ID:', probeId),
-          const SizedBox(height: 16),
-          _twoColRow('Calibration Date:', calibrationDate),
-          const SizedBox(height: 16),
-          _twoColRow('Calibration Due:', calibrationDue),
-          const Spacer(),
-          // Current Process Details inline card (only when workstation is selected)
-          if (slip != null && !isSlipExpired) _buildSlipCard(),
-          if (isSlipExpired) _buildNoProductionCard(),
+          if (!configured)
+            Expanded(child: Center(child: _buildConfigureGuide()))
+          else ...[
+            _twoColRow('Workstation name:', workstationName),
+            const SizedBox(height: 16),
+            _twoColRow('Probe ID:', probeId),
+            const SizedBox(height: 16),
+            _twoColRow('Calibration Date:', calibrationDate),
+            const SizedBox(height: 16),
+            _twoColRow('Calibration Due:', calibrationDue),
+            const Spacer(),
+            // Current Process Details inline card (only when workstation is selected)
+            if (slip != null && !isSlipExpired) _buildSlipCard(),
+            if (isSlipExpired) _buildNoProductionCard(),
+          ],
         ],
       ),
     );
@@ -798,6 +877,48 @@ class _SensorCard extends StatelessWidget {
         Expanded(flex: 2, child: Text(label, style: _labelStyle)),
         const SizedBox(width: 12),
         Expanded(flex: 3, child: Text(value, style: _valueStyle)),
+      ],
+    );
+  }
+
+  Widget _buildConfigureGuide() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.sensors_off_rounded,
+          size: 54,
+          color: labelText.withValues(alpha: 0.45),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Sensor not configured',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: headingText,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Set up the sensor to see the probe ID, calibration and permitted range.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, height: 1.35, color: labelText),
+        ),
+        const SizedBox(height: 18),
+        ElevatedButton.icon(
+          onPressed: onConfigure,
+          icon: const Icon(Icons.tune_rounded, size: 18),
+          label: const Text('Configure sensor'),
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -817,7 +938,7 @@ class _SensorCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF0A66FF).withOpacity(0.2),
+              color: const Color(0xFF0A66FF).withValues(alpha: 0.2),
               blurRadius: 8,
               offset: const Offset(0, 3),
             ),
@@ -830,7 +951,7 @@ class _SensorCard extends StatelessWidget {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.18),
+                color: Colors.white.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(
@@ -849,7 +970,7 @@ class _SensorCard extends StatelessWidget {
                   Text(
                     "Current Process Details",
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
+                      color: Colors.white.withValues(alpha: 0.7),
                       fontWeight: FontWeight.w600,
                       fontSize: 10,
                       letterSpacing: 0.6,
@@ -875,7 +996,7 @@ class _SensorCard extends StatelessWidget {
               width: 24,
               height: 24,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
+                color: Colors.white.withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -907,7 +1028,7 @@ class _SensorCard extends StatelessWidget {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.18),
+              color: Colors.white.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
@@ -925,7 +1046,7 @@ class _SensorCard extends StatelessWidget {
                 Text(
                   "Production Status",
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
+                    color: Colors.white.withValues(alpha: 0.7),
                     fontWeight: FontWeight.w600,
                     fontSize: 10,
                     letterSpacing: 0.6,
@@ -962,6 +1083,7 @@ class _DewPointCard extends StatelessWidget {
     required this.minVal,
     required this.maxVal,
     required this.isLive,
+    this.showRange = true,
   });
 
   final Color dewBg;
@@ -975,6 +1097,7 @@ class _DewPointCard extends StatelessWidget {
   final String minVal;
   final String maxVal;
   final bool isLive;
+  final bool showRange;
 
   TextStyle get _headingStyle =>
       TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: dewLabelText);
@@ -1007,21 +1130,15 @@ class _DewPointCard extends StatelessWidget {
   TextStyle get _ppmLabelStyle => TextStyle(
     fontSize: 14,
     fontWeight: FontWeight.w600,
-    color: dewLabelText.withOpacity(0.7),
+    color: dewLabelText.withValues(alpha: 0.7),
     letterSpacing: 0.5,
   );
-
-  TextStyle get _ppmValueStyle =>
-      TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: dewLabelText);
 
   TextStyle get _updatedStyle => const TextStyle(
     fontSize: 14,
     fontWeight: FontWeight.w500,
     color: Color(0xFF7A8AA6),
   );
-
-  TextStyle get _minMaxLabelStyle =>
-      TextStyle(fontSize: 14, fontWeight: FontWeight.w600);
 
   @override
   Widget build(BuildContext context) {
@@ -1052,7 +1169,7 @@ class _DewPointCard extends StatelessWidget {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF5A8DFF).withOpacity(0.12),
+                  color: const Color(0xFF5A8DFF).withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -1173,41 +1290,42 @@ class _DewPointCard extends StatelessWidget {
 
           const Spacer(),
 
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 12.0),
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  "PERMITTED RANGE",
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.2,
-                    color: dewLabelText.withOpacity(0.8),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildMinMax("Min", minVal),
-                    Container(
-                      width: 1,
-                      height: 24,
-                      color: const Color(0xFFCBD5E1),
+          if (showRange)
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 12.0),
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    "PERMITTED RANGE",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                      color: dewLabelText.withValues(alpha: 0.8),
                     ),
-                    _buildMinMax("Max", maxVal),
-                  ],
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildMinMax("Min", minVal),
+                      Container(
+                        width: 1,
+                        height: 24,
+                        color: const Color(0xFFCBD5E1),
+                      ),
+                      _buildMinMax("Max", maxVal),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
 
           Align(
             alignment: Alignment.centerLeft,
@@ -1235,7 +1353,7 @@ class _DewPointCard extends StatelessWidget {
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: dewLabelText.withOpacity(0.6),
+            color: dewLabelText.withValues(alpha: 0.6),
           ),
         ),
       ],
@@ -1304,13 +1422,13 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
                   BoxShadow(
                     color: const Color(
                       0xFF0A66FF,
-                    ).withOpacity(0.25 + (_pulseAnimation.value * 0.15)),
+                    ).withValues(alpha: 0.25 + (_pulseAnimation.value * 0.15)),
                     blurRadius: 16 + (_pulseAnimation.value * 8),
                     spreadRadius: 0,
                     offset: const Offset(0, 4),
                   ),
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.12),
+                    color: Colors.black.withValues(alpha: 0.12),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -1327,7 +1445,7 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
+                  color: Colors.white.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
@@ -1345,7 +1463,7 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
                   Text(
                     "Current Process Details",
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.75),
+                      color: Colors.white.withValues(alpha: 0.75),
                       fontWeight: FontWeight.w600,
                       fontSize: 11,
                       letterSpacing: 0.8,
@@ -1368,7 +1486,7 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
               Container(
                 width: 1,
                 height: 28,
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
               ),
               const SizedBox(width: 14),
               // Battery No badge
@@ -1378,10 +1496,10 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
                   vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
+                  color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: Colors.white.withOpacity(0.2),
+                    color: Colors.white.withValues(alpha: 0.2),
                     width: 1,
                   ),
                 ),
@@ -1401,7 +1519,7 @@ class _ProcessSlipButtonState extends State<_ProcessSlipButton>
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
+                  color: Colors.white.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -1442,7 +1560,7 @@ class _ProcessSlipContent extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 30,
             spreadRadius: 5,
             offset: const Offset(0, 15),

@@ -2,42 +2,33 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../socket_service.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
-import '../config/api_constants.dart';
 import '../services/config_service.dart';
-import 'det_selector_screen.dart';
-import 'settings_screen.dart';
-import '../services/update_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class GaugeScreen extends StatefulWidget {
-  const GaugeScreen({super.key});
+  final VoidCallback? onNavigateToSettings;
+
+  const GaugeScreen({super.key, this.onNavigateToSettings});
 
   @override
-  State<GaugeScreen> createState() => _GaugeScreenState();
+  State<GaugeScreen> createState() => GaugeScreenState();
 }
 
-class _GaugeScreenState extends State<GaugeScreen>
+class GaugeScreenState extends State<GaugeScreen>
     with AutomaticKeepAliveClientMixin {
   String _thicknessValue = "--.---";
   String _weightValue = "--.--";
   bool isConnected = false;
   StreamSubscription? _gaugeSub;
+  StreamSubscription? _connSub;
   String _machineName = "Unknown";
   String _machineIp = "";
+  bool _machineConfigured = false;
 
   // Pi Health
   String _piTempValue = "--";
   bool? _piThrottled;
-
-  // WebSocket channel for DET selector & updates
-  WebSocketChannel? _detChannel;
-  final String detWsUrl = ApiConstants.detWsUrl;
-  final String apiHost = ApiConstants.detApiHost;
-
-  bool _updateAvailable = false;
 
   // Range Settings (Machine Specific)
   double? _minThickness;
@@ -54,10 +45,9 @@ class _GaugeScreenState extends State<GaugeScreen>
   void initState() {
     super.initState();
     _loadConfig();
-    _checkUpdate();
 
     // 1) Subscribe to connection status
-    SocketService().connectionStatus.listen((status) {
+    _connSub = SocketService().connectionStatus.listen((status) {
       if (mounted) {
         setState(() {
           isConnected = status;
@@ -67,8 +57,6 @@ class _GaugeScreenState extends State<GaugeScreen>
 
     // 2) existing gauge data subscription
     _gaugeSub = SocketService().gaugeStream.listen((data) {
-      print("Received Data: $data"); // Debug log within the app logic
-
       if (mounted) {
         setState(() {
           if (data.containsKey('height')) {
@@ -98,40 +86,20 @@ class _GaugeScreenState extends State<GaugeScreen>
 
     // 3) Connect socket
     _connectSocket();
-
-    // 4) create a WS channel dedicated for DET subscriptions & UI
-    try {
-      _detChannel = IOWebSocketChannel.connect(detWsUrl);
-      _detChannel!.stream.listen(
-        (msg) {},
-        onError: (err) {
-          debugPrint('DET WS error: $err');
-        },
-        onDone: () {
-          debugPrint('DET WS closed');
-        },
-      );
-    } catch (_) {
-      // Add catch block
-      // ignore or log
-      _detChannel = null;
-    }
   }
 
-  Future<void> _checkUpdate() async {
-    final result = await UpdateService().checkForUpdate();
-    if (result != null && result['updateAvailable'] == true) {
-      if (mounted) {
-        setState(() {
-          _updateAvailable = true;
-        });
-      }
-    }
+  /// Re-reads the saved hardware configuration and reconnects the socket.
+  /// Called by the shell when the user navigates back to this screen so that
+  /// changes made in Settings take effect without restarting the app.
+  Future<void> refreshConfig() async {
+    await _loadConfig();
+    await _connectSocket();
   }
 
   Future<void> _loadConfig() async {
     final name = await ConfigService().getSavedMachineType();
     setState(() {
+      _machineConfigured = name != null;
       _machineName = name ?? "Select Machine"; // Use placeholder if null
     });
     await _loadRanges();
@@ -142,29 +110,38 @@ class _GaugeScreenState extends State<GaugeScreen>
     if (url == null) {
       // If no URL selected, ensure disconnected and UI shows 'Select'
       SocketService().disconnect();
-      setState(() {
-        _machineIp = "";
-        isConnected = false;
-      });
+      if (mounted) {
+        setState(() {
+          _machineIp = "";
+          isConnected = false;
+        });
+      }
       return;
     }
 
-    setState(() {
-      _machineIp = url;
-      // Reset data on switch to prevent mixing
-      _thicknessValue = "--.---";
-      _weightValue = "--.--";
-    });
+    // Nothing changed since we last connected — leave the live values alone.
+    if (url == _machineIp) return;
+
+    if (mounted) {
+      setState(() {
+        _machineIp = url;
+        isConnected = false;
+        // Reset ALL live values on switch so stale readings from the previous
+        // machine (thickness, weight, Pi temperature) don't linger while the
+        // new machine is still connecting.
+        _thicknessValue = "--.---";
+        _weightValue = "--.--";
+        _piTempValue = "--";
+        _piThrottled = null;
+      });
+    }
     SocketService().connect(url);
   }
 
   @override
   void dispose() {
     _gaugeSub?.cancel();
-    try {
-      _detChannel?.sink.close();
-    } catch (_) {}
-    _detChannel = null;
+    _connSub?.cancel();
     super.dispose();
   }
 
@@ -181,7 +158,7 @@ class _GaugeScreenState extends State<GaugeScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _machineName,
+              _machineConfigured ? _machineName : 'Live Readings',
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.black87,
@@ -198,17 +175,20 @@ class _GaugeScreenState extends State<GaugeScreen>
         elevation: 1,
         iconTheme: const IconThemeData(color: Colors.black),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: IconButton(
-              icon: const Icon(Icons.tune, color: Colors.blueGrey),
-              tooltip: "Range Settings",
-              onPressed: _showRangeSettings,
+          if (_machineConfigured)
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: IconButton(
+                icon: const Icon(Icons.tune, color: Colors.blueGrey),
+                tooltip: "Range Settings",
+                onPressed: _showRangeSettings,
+              ),
             ),
-          ),
         ],
       ),
-      body: Center(
+      body: !_machineConfigured
+          ? _buildNoMachineState()
+          : Center(
         child: SingleChildScrollView(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -230,8 +210,8 @@ class _GaugeScreenState extends State<GaugeScreen>
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: isConnected
-                        ? Colors.green.withOpacity(0.3)
-                        : Colors.red.withOpacity(0.3),
+                        ? Colors.green.withValues(alpha: 0.3)
+                        : Colors.red.withValues(alpha: 0.3),
                   ),
                 ),
                 child: Row(
@@ -312,6 +292,54 @@ class _GaugeScreenState extends State<GaugeScreen>
     );
   }
 
+  /// Empty-state shown when no machine has been selected yet.
+  /// Mirrors the Work Instructions screen's "not configured" placeholder
+  /// instead of showing a red "Connecting..." status.
+  Widget _buildNoMachineState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.precision_manufacturing_rounded,
+              size: 72,
+              color: Colors.blueGrey[200],
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'No machine selected',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.blueGrey[700],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Choose a machine in Settings to start monitoring.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.blueGrey[400]),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: widget.onNavigateToSettings,
+              icon: const Icon(Icons.settings),
+              label: const Text('Open Settings'),
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildGaugeCard({
     required String title,
     required String value,
@@ -329,7 +357,7 @@ class _GaugeScreenState extends State<GaugeScreen>
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -420,7 +448,7 @@ class _GaugeScreenState extends State<GaugeScreen>
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -436,7 +464,7 @@ class _GaugeScreenState extends State<GaugeScreen>
               getColor(value1, defaultColor1, min1, max1),
             ),
           ),
-          Container(width: 1, height: 80, color: Colors.grey.withOpacity(0.2)),
+          Container(width: 1, height: 80, color: Colors.grey.withValues(alpha: 0.2)),
           Expanded(
             child: _buildValueColumn(
               title2,
@@ -696,7 +724,7 @@ class _GaugeScreenState extends State<GaugeScreen>
       // Better: I'll try to find a system sound or just leave the placeholder for the user to add 'assets/alert.mp3'.
 
       // Attempting to play a generic error sound if available or just log.
-      // print("BEEP! BEEP!");
+      // debugPrint("BEEP! BEEP!");
 
       // Provide a concrete implementation assuming 'assets/alert.mp3' exists or will exist.
       // Or use a URL for a simple beep test.
@@ -708,7 +736,7 @@ class _GaugeScreenState extends State<GaugeScreen>
         ),
       );
     } catch (e) {
-      print('Audio error: $e');
+      debugPrint('Audio error: $e');
     }
   }
 }

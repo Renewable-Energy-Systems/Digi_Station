@@ -23,7 +23,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     final resp = await http.get(uri).timeout(const Duration(seconds: 6));
     if (resp.statusCode == 200) {
       final j = json.decode(resp.body);
-      print('[DEBUG] DetSelector response: $j'); // Added debug log
+      debugPrint('[DEBUG] DetSelector response: $j'); // Added debug log
       if (j is Map && j['found'] == true && j['sensor'] is Map) {
         final sensorData = Map<String, dynamic>.from(j['sensor']);
         // Cache successful response
@@ -36,7 +36,7 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
       }
     }
   } catch (e) {
-    print('fetchSensorInfoFromServerByParam error: $e');
+    debugPrint('fetchSensorInfoFromServerByParam error: $e');
   }
 
   // Fallback to cache if network request fails
@@ -44,11 +44,11 @@ Future<Map<String, dynamic>?> fetchSensorInfoFromServerByParam(
     final prefs = await SharedPreferences.getInstance();
     final cached = prefs.getString('sensor_master_cache_$param');
     if (cached != null) {
-      print('[DEBUG] using cached sensorinfo for param $param in DetSelector');
+      debugPrint('[DEBUG] using cached sensorinfo for param $param in DetSelector');
       return Map<String, dynamic>.from(json.decode(cached));
     }
   } catch (e) {
-    print('fetchSensorInfoFromServerByParam cache error: $e');
+    debugPrint('fetchSensorInfoFromServerByParam cache error: $e');
   }
 
   return null;
@@ -225,7 +225,7 @@ class _DetSelectorScreenState extends State<DetSelectorScreen>
         _maxCtrl.text = '';
       }
     } catch (e) {
-      print('loadSensorInfo error: $e');
+      debugPrint('loadSensorInfo error: $e');
     } finally {
       if (mounted) setState(() => loadingSensor = false);
     }
@@ -334,7 +334,7 @@ class _DetSelectorScreenState extends State<DetSelectorScreen>
         }
       }
     } catch (e) {
-      print('_forceLoadFromDb error: $e');
+      debugPrint('_forceLoadFromDb error: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -405,14 +405,14 @@ class _DetSelectorScreenState extends State<DetSelectorScreen>
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [primaryColor, primaryColor.withOpacity(0.8)],
+          colors: [primaryColor, primaryColor.withValues(alpha: 0.8)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: primaryColor.withOpacity(0.3),
+            color: primaryColor.withValues(alpha: 0.3),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -662,7 +662,7 @@ class _DetSelectorScreenState extends State<DetSelectorScreen>
         filled: true,
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        fillColor: Colors.blueGrey[50]!.withOpacity(0.3),
+        fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.3),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,

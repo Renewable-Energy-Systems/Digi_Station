@@ -10,8 +10,8 @@ void main() async {
   // Initialize centralized WebSocket service (Dewpoint)
   SocketService().connectDewpoint(ApiConstants.detWsUrl);
 
-  // Lock orientation
-  await SystemChrome.setPreferredOrientations([
+  // Lock orientation (fire-and-forget so it doesn't delay the first frame).
+  SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
@@ -41,7 +41,7 @@ class RESKioskApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'RES Production Kiosk',
+      title: 'Digi Station',
       debugShowCheckedModeBanner: false,
       theme: theme,
       home: KioskShell(

@@ -45,14 +45,9 @@ class _DetSelectorState extends State<DetSelector> {
       final saved = prefs.getString(_prefKey);
 
       String? initial = saved;
-      // Safety check: Avoid Red Screen if saved value is no longer in the list
+      // Safety check: avoid a crash if the saved value is no longer in the list.
       if (initial != null && !dets.contains(initial)) {
         initial = null;
-      }
-
-      if (initial == null && dets.isNotEmpty) {
-        initial = dets.first;
-        await prefs.setString(_prefKey, initial);
       }
 
       setState(() {
@@ -61,22 +56,17 @@ class _DetSelectorState extends State<DetSelector> {
         status = 'ready';
       });
 
-      // notify parent about the initial selection (so parent sets selectedDet and UI becomes active)
+      // IMPORTANT: opening / viewing the selector is NOT a configuration change.
+      // Do not call onChanged and do not (re)subscribe here — that would reset
+      // the Home screen's live subscription and flash it "offline". Only an
+      // explicit pick in the dropdown (_onUserSelected) counts as a change.
       if (selected != null) {
-        widget.onChanged?.call(selected);
-      }
-
-      if (selected != null) {
-        SocketService().subscribeDewpoint(selected!);
-      }
-
-      if (selected != null) {
-        // optionally fetch sensor info and notify parent
+        // Populate the form fields for display only.
         final map = await _fetchSensorInfo(selected!);
         widget.onSensorInfo?.call(map);
       }
     } catch (e, st) {
-      print('DetSelector load error: $e\n$st');
+      debugPrint('DetSelector load error: $e\n$st');
       setState(() => status = 'error');
     }
   }
@@ -108,7 +98,7 @@ class _DetSelectorState extends State<DetSelector> {
         }
       }
     } catch (e) {
-      print('fetchSensorInfo error: $e');
+      debugPrint('fetchSensorInfo error: $e');
     }
     return null;
   }
@@ -131,10 +121,6 @@ class _DetSelectorState extends State<DetSelector> {
 
     final sensorMap = await _fetchSensorInfo(newCol);
     widget.onSensorInfo?.call(sensorMap);
-  }
-
-  void _sendSubscribe(String col) {
-    SocketService().subscribeDewpoint(col);
   }
 
   void _sendUnsubscribe(String col) {

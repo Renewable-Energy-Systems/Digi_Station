@@ -2,7 +2,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/process_slip_model.dart';
-import '../config/api_constants.dart';
 import 'config_service.dart';
 
 class ProcessSlipService {

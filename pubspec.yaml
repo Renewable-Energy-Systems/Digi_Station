@@ -47,6 +47,7 @@ dependencies:
   ota_update: ^7.1.0
   package_info_plus: ^9.0.0
   audioplayers: ^6.0.0
+  flutter_tts: ^4.2.0        # spoken (female-voice) out-of-range alerts
   # Secure OTA dependencies
   dio: ^5.4.0
   crypto: ^3.0.3
@@ -63,6 +64,20 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+
+  # Generates the Android launcher icon from the RES logo.
+  # Run: dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher icon configuration (RES logo). Regenerate with:
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "assets/icon/app_icon_bg.png"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

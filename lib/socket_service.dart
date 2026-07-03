@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:socket_io_client/socket_io_client.dart' as io;
 
 enum SocketConnectionState { connecting, connected, disconnected }
 
@@ -27,7 +29,7 @@ class SocketService {
   SocketConnectionState get wsState => _wsState;
 
   // ----- Socket.IO (Gauge Server / Raspberry Pi) -----
-  IO.Socket? _ioSocket;
+  io.Socket? _ioSocket;
   String? _ioUrl;
   
   final _gaugeController = StreamController<Map<String, dynamic>>.broadcast();
@@ -47,26 +49,46 @@ class SocketService {
     _wsReconnect();
   }
 
-  void _wsReconnect() {
+  Future<void> _wsReconnect() async {
     _wsReconnectTimer?.cancel();
     _closeWsInternal();
-    
+
+    final url = _wsUrl;
+    if (url == null) return;
+
     _updateWsState(SocketConnectionState.connecting);
-    print("[WS-DEW] Connecting to $_wsUrl...");
+    debugPrint("[WS-DEW] Connecting to $url...");
 
     try {
-      _wsChannel = IOWebSocketChannel.connect(Uri.parse(_wsUrl!));
+      // Connect explicitly with a timeout. IOWebSocketChannel.connect() fails
+      // ASYNCHRONOUSLY, so a plain try/catch around it can't catch a dead
+      // server and the SocketException escapes as an unhandled exception.
+      // Awaiting WebSocket.connect() lets us catch it here and fail fast
+      // instead of waiting for the ~2-minute OS TCP timeout.
+      final socket = await WebSocket.connect(
+        url,
+      ).timeout(const Duration(seconds: 8));
+
+      // The selected machine/URL may have changed while we were connecting.
+      if (url != _wsUrl) {
+        await socket.close();
+        return;
+      }
+
+      _wsChannel = IOWebSocketChannel(socket);
       _wsSubscription = _wsChannel!.stream.listen(
         (data) => _handleWsData(data),
         onDone: () => _handleWsDisconnect(),
         onError: (err) => _handleWsError(err),
+        cancelOnError: true,
       );
-      // Assume connected for sending (buffering handled by channel)
+      // Only now is the connection actually established.
       _updateWsState(SocketConnectionState.connected);
-      
-      // AUTO-RESUBSCRIBE: Restore active subscription immediately
+      debugPrint("[WS-DEW] Connected");
+
+      // AUTO-RESUBSCRIBE: Restore active subscription.
       if (_currentSubscribedCol != null) {
-        print("[WS-DEW] Restoring subscription for $_currentSubscribedCol");
+        debugPrint("[WS-DEW] Restoring subscription for $_currentSubscribedCol");
         subscribeDewpoint(_currentSubscribedCol!);
       }
     } catch (e) {
@@ -77,7 +99,7 @@ class SocketService {
   void _handleWsData(dynamic data) {
     if (_wsState != SocketConnectionState.connected) {
       _updateWsState(SocketConnectionState.connected);
-      print("[WS-DEW] Receiving data");
+      debugPrint("[WS-DEW] Receiving data");
     }
     try {
       Map<String, dynamic> msg;
@@ -91,18 +113,18 @@ class SocketService {
       }
       _dewpointController.add(msg);
     } catch (e) {
-      print("[WS-DEW] Data parse error: $e. Raw data: $data (Type: ${data.runtimeType})");
+      debugPrint("[WS-DEW] Data parse error: $e. Raw data: $data (Type: ${data.runtimeType})");
     }
   }
 
   void _handleWsDisconnect() {
-    print("[WS-DEW] Disconnected from server");
+    debugPrint("[WS-DEW] Disconnected from server");
     _updateWsState(SocketConnectionState.disconnected);
     _scheduleWsReconnect();
   }
 
   void _handleWsError(dynamic err) {
-    print("[WS-DEW] Error: $err");
+    debugPrint("[WS-DEW] Error: $err");
     _updateWsState(SocketConnectionState.disconnected);
     _scheduleWsReconnect();
   }
@@ -119,7 +141,7 @@ class SocketService {
 
   void subscribeDewpoint(String col) {
     _currentSubscribedCol = col;
-    print("[WS-DEW] Sending subscribe for $col");
+    debugPrint("[WS-DEW] Sending subscribe for $col");
     _sendWs({'action': 'subscribe', 'col': col});
   }
 
@@ -134,7 +156,7 @@ class SocketService {
     try {
       _wsChannel?.sink.add(jsonEncode(msg));
     } catch (e) {
-      print("[WS-DEW] Send error: $e");
+      debugPrint("[WS-DEW] Send error: $e");
     }
   }
 
@@ -157,30 +179,36 @@ class SocketService {
     if (_ioSocket != null) disconnect();
     
     _ioUrl = url;
-    print("[IO-GAUGE] Connecting to $url...");
+    debugPrint("[IO-GAUGE] Connecting to $url...");
 
-    _ioSocket = IO.io(
+    _ioSocket = io.io(
       url,
-      IO.OptionBuilder()
+      io.OptionBuilder()
           .setTransports(['websocket'])
           .enableAutoConnect()
+          .enableReconnection()
+          // Back off between retries so an unreachable machine doesn't flood
+          // the log with rapid "timeout" errors.
+          .setReconnectionDelay(3000)
+          .setReconnectionDelayMax(15000)
+          .setTimeout(8000)
           .build(),
     );
 
     _ioSocket!.onConnect((_) {
-      print("[IO-GAUGE] Connected");
+      debugPrint("[IO-GAUGE] Connected");
       _ioConnected = true;
       _ioStatusController.add(true);
     });
 
     _ioSocket!.onDisconnect((_) {
-      print("[IO-GAUGE] Disconnected");
+      debugPrint("[IO-GAUGE] Disconnected");
       _ioConnected = false;
       _ioStatusController.add(false);
     });
 
     _ioSocket!.onConnectError((err) {
-      print("[IO-GAUGE] Error: $err");
+      debugPrint("[IO-GAUGE] Error: $err");
       _ioConnected = false;
       _ioStatusController.add(false);
     });
