@@ -73,11 +73,21 @@ def github_upload(token, tag, apk_path):
         "tag_name": tag,
         "target_commitish": "main",
         "name": f"{tag}",
-        "body": f"### Improvements ({tag})\n"
-                "- **Real-time Sync**: Implemented SSE listener for instant process slip updates.\n"
-                "- **UI & Performance**: Optimized dashboard for tablet operation and modernized the interface.\n"
-                "- **Bug Fixes**: Fixed workstation dropdown bugs and resolved bottom overflow UI issues.\n"
-                "- **Stability**: Updated API constants and improved process slip loading reliability.",
+        "body": f"## Digi Station {tag}\n\n"
+                "**New look and name**\n"
+                "- The app is now **Digi Station**, with a new RES-blue app icon.\n"
+                "- Redesigned **Settings** as a two-pane screen - pick the connected **Machine** (HPM / CPM / APM / EPM) from tiles.\n"
+                "- The old 'Gauge' screen is now **Live Readings** (thickness and weight from the weighing balance / thickness gauge).\n\n"
+                "**New features**\n"
+                "- **Dew-point voice alert**: a spoken warning plays when the dew point leaves the permitted range.\n"
+                "- The Home screen shows a 'Configure sensor' guide until a sensor is set up.\n"
+                "- Buttons now open the exact **Settings** section directly (Machine / Work Instructions).\n\n"
+                "**Fixes and improvements**\n"
+                "- Changing the machine takes effect on returning to **Live Readings** - no app restart.\n"
+                "- Viewing **Sensor Configuration** no longer drops the live dew-point reading.\n"
+                "- The previous machine's **Pi temperature** no longer lingers after switching.\n"
+                "- More reliable connections - no crash when a server is unreachable; faster, quieter reconnection.\n"
+                "- Smoother startup and screen switching.",
         "draft": False,
         "prerelease": False
     }
@@ -128,6 +138,11 @@ def main():
 
     parser = argparse.ArgumentParser(description="Automate Flutter Release")
     parser.add_argument("--token", help="GitHub Personal Access Token")
+    parser.add_argument(
+        "--no-bump",
+        action="store_true",
+        help="Release the current pubspec version as-is (do not auto-increment)",
+    )
     args = parser.parse_args()
     
     token = args.token or os.environ.get("GITHUB_TOKEN")
@@ -136,12 +151,15 @@ def main():
 
     # 1. Versioning
     cur_v = get_current_version_info()
-    new_v = increment_version(cur_v)
-    print(f"Current Version: {cur_v}")
-    print(f"Bumping to:    {new_v}")
-    
-    update_pubspec(new_v)
-    
+    if args.no_bump:
+        new_v = cur_v
+        print(f"Releasing current version (no bump): {new_v}")
+    else:
+        new_v = increment_version(cur_v)
+        print(f"Current Version: {cur_v}")
+        print(f"Bumping to:    {new_v}")
+        update_pubspec(new_v)
+
     # 2. Build App
     print("\n--- Building APK (Release) ---")
     # Bake the token into the app using --dart-define
