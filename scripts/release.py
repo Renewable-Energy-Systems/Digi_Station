@@ -74,20 +74,13 @@ def github_upload(token, tag, apk_path):
         "target_commitish": "main",
         "name": f"{tag}",
         "body": f"## Digi Station {tag}\n\n"
-                "**New look and name**\n"
-                "- The app is now **Digi Station**, with a new RES-blue app icon.\n"
-                "- Redesigned **Settings** as a two-pane screen - pick the connected **Machine** (HPM / CPM / APM / EPM) from tiles.\n"
-                "- The old 'Gauge' screen is now **Live Readings** (thickness and weight from the weighing balance / thickness gauge).\n\n"
-                "**New features**\n"
-                "- **Dew-point voice alert**: a spoken warning plays when the dew point leaves the permitted range.\n"
-                "- The Home screen shows a 'Configure sensor' guide until a sensor is set up.\n"
-                "- Buttons now open the exact **Settings** section directly (Machine / Work Instructions).\n\n"
-                "**Fixes and improvements**\n"
-                "- Changing the machine takes effect on returning to **Live Readings** - no app restart.\n"
-                "- Viewing **Sensor Configuration** no longer drops the live dew-point reading.\n"
-                "- The previous machine's **Pi temperature** no longer lingers after switching.\n"
-                "- More reliable connections - no crash when a server is unreachable; faster, quieter reconnection.\n"
-                "- Smoother startup and screen switching.",
+                "**Station flexibility**\n"
+                "- **Station & API can be turned off** per station - stations that don't use the ops server no longer fetch workstations or live process slips (and show no related errors).\n"
+                "- **Settings follow your layout** - a section is disabled when its screen is off in Layout & Navigation (e.g. no **Machine** while **Live Readings** is off, no video picks while **Work Instructions** is off).\n\n"
+                "**Production hardening**\n"
+                "- Release builds use the **Production** ops API only (the LOCAL toggle is a development-only convenience).\n"
+                "- In Production, the **Workstation Identity is select-from-list only** - no free-typed IDs.\n"
+                "- The production ops API is now called over **HTTPS**.",
         "draft": False,
         "prerelease": False
     }

@@ -4,6 +4,26 @@ All notable changes to Digi Station are recorded here. The latest section is
 also used as the **GitHub Release notes** (the in-app updater shows the release
 body to whoever installs the update).
 
+## 2.1.1 — 2026-07-04
+
+**Station flexibility**
+- **Station & API can be turned off per station** (Settings → Station & API).
+  Stations that don't use the ops server no longer fetch workstations or live
+  process slips — and no longer show the related errors.
+- **Settings now follow your layout.** If a screen is turned off in Layout &
+  Navigation, its configuration is disabled with a shortcut to switch it back
+  on — you can't pick a **Machine** while **Live Readings** is off, or choose
+  videos while **Work Instructions** is off.
+
+**Production hardening**
+- Release builds use the **Production** ops API only — the LOCAL option (a
+  development convenience) is hidden.
+- In Production, the **Workstation Identity is chosen from the list only** — no
+  free-typed IDs.
+- The production ops API is now called over **HTTPS**.
+
+---
+
 ## 2.1.0 — 2026-07-04
 
 **New look & name**
