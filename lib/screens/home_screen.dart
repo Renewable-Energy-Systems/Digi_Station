@@ -203,8 +203,12 @@ class HomeScreenState extends State<HomeScreen>
   Future<void> _initAll() async {
     await _loadSelectedDetAndSensorInfo();
     _listenToSocket();
-    _refreshSlip();
-    _listenToSlipUpdates();
+    // Only fetch/stream process slips when this station uses the ops API —
+    // otherwise it never contacts the ops server (no slip card, no errors).
+    if (await ConfigService().isStationApiEnabled()) {
+      _refreshSlip();
+      _listenToSlipUpdates();
+    }
   }
 
   @override

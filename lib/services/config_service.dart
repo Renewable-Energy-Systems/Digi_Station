@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_constants.dart';
@@ -17,6 +18,7 @@ class ConfigService {
   static const String _keyWorkstationId = 'workstation_id';
   static const String _keyWorkstationRole = 'workstation_role';
   static const String _keyUseProductionApi = 'use_production_api';
+  static const String _keyStationApiEnabled = 'station_api_enabled';
 
   Future<String?> getSavedMachineType() async {
     final prefs = await SharedPreferences.getInstance();
@@ -49,6 +51,9 @@ class ConfigService {
   }
 
   Future<bool> shouldUseProductionApi() async {
+    // Release builds always use the (secured) production API — the LOCAL option
+    // is a development convenience only.
+    if (kReleaseMode) return true;
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyUseProductionApi) ?? false;
   }
@@ -56,6 +61,19 @@ class ConfigService {
   Future<void> saveUseProductionApi(bool useProd) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyUseProductionApi, useProd);
+  }
+
+  /// Whether this station uses the ops API (workstation list + live process
+  /// slips). Stations that don't need it can turn it off so the app never
+  /// contacts the ops server (avoiding unnecessary errors). Defaults to ON.
+  Future<bool> isStationApiEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyStationApiEnabled) ?? true;
+  }
+
+  Future<void> saveStationApiEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyStationApiEnabled, enabled);
   }
 
   Future<String> getOpsDigiBaseUrl() async {

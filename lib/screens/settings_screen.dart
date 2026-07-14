@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import '../config/api_constants.dart';
 import '../services/config_service.dart';
@@ -44,6 +45,7 @@ class SettingsScreenState extends State<SettingsScreen>
   String? _fetchError;
   bool _isManualMode = false;
   bool _useProductionApi = false;
+  bool _stationApiEnabled = true;
 
   // Currently selected settings category in the two-pane layout.
   int _selectedSection = 0;
@@ -116,6 +118,7 @@ class SettingsScreenState extends State<SettingsScreen>
       final packageInfo = await PackageInfo.fromPlatform();
       final enabledScreens = await _screenConfigService.getEnabledScreens();
       final useProductionApi = await _configService.shouldUseProductionApi();
+      final stationApiEnabled = await _configService.isStationApiEnabled();
 
       if (mounted) {
         setState(() {
@@ -126,10 +129,23 @@ class SettingsScreenState extends State<SettingsScreen>
           _selectedVideoIds.addAll(savedVideoIds);
           _enabledScreens = enabledScreens;
           _useProductionApi = useProductionApi;
+          _stationApiEnabled = stationApiEnabled;
         });
       }
 
-      // 2. Attempt network calls
+      // 2. Only contact the ops server when Station & API is enabled — a station
+      // with it turned off never makes these calls (so it can't throw errors).
+      if (!stationApiEnabled) {
+        if (mounted) {
+          setState(() {
+            _workstations = [];
+            _isFetchingWorkstations = false;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
       final workstations = await _configService.fetchWorkstations();
 
       if (mounted) {
@@ -138,8 +154,12 @@ class SettingsScreenState extends State<SettingsScreen>
           _isFetchingWorkstations = false;
           _isLoading = false;
 
-          // Auto-enable manual mode if no workstations were fetched
-          if (_workstations.isEmpty && workstationId != null && workstationId.isNotEmpty) {
+          // Auto-enable manual entry if no workstations were fetched — but only
+          // in LOCAL/dev. Production is select-from-list only.
+          if (!useProductionApi &&
+              _workstations.isEmpty &&
+              workstationId != null &&
+              workstationId.isNotEmpty) {
             _isManualMode = true;
           }
         });
@@ -181,6 +201,13 @@ class SettingsScreenState extends State<SettingsScreen>
 
     // Notify parent to refresh
     widget.onSettingsChanged?.call();
+  }
+
+  Future<void> _toggleStationApi(bool enabled) async {
+    setState(() => _stationApiEnabled = enabled);
+    await _configService.saveStationApiEnabled(enabled);
+    _loadSettings(); // re-run: fetch the workstation list (on) or skip it (off)
+    widget.onSettingsChanged?.call(); // rebuild so Home starts/stops slip fetching
   }
 
   Future<void> _saveSettings(String? newValue) async {
@@ -602,6 +629,16 @@ class SettingsScreenState extends State<SettingsScreen>
   }
 
   Widget _buildHardwareSection(Color primaryColor) {
+    // A machine only matters if the Live Readings screen is on. If it's off,
+    // don't let the user pick one — point them to Layout & Navigation first.
+    if (!_enabledScreens.contains(AppScreen.gauge)) {
+      return _buildDisabledScreenNotice(
+        'Live Readings is turned off',
+        'Turn on the Live Readings toggle in Layout & Navigation first — '
+            'selecting a machine only helps when that screen is on.',
+        primaryColor,
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -702,131 +739,220 @@ class SettingsScreenState extends State<SettingsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Master switch — some stations don't use the ops API at all, so this
+          // lets them turn the whole thing off (no workstations, no slips, no
+          // errors) rather than fighting connection failures.
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Workstation Identity',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Use Station & API',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Fetch the workstation list and live process slips for this station',
+                      style:
+                          TextStyle(fontSize: 12, color: Colors.blueGrey[400]),
+                    ),
+                  ],
+                ),
               ),
-              TextButton.icon(
-                onPressed: () =>
-                    setState(() => _isManualMode = !_isManualMode),
-                icon: Icon(
-                    _isManualMode
-                        ? Icons.list_rounded
-                        : Icons.edit_rounded,
-                    size: 16),
-                label: Text(
-                    _isManualMode ? 'Select from List' : 'Manual Entry',
-                    style: const TextStyle(fontSize: 11)),
+              Switch(
+                value: _stationApiEnabled,
+                activeThumbColor: primaryColor,
+                onChanged: _toggleStationApi,
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          if (_fetchError != null)
+          if (!_stationApiEnabled)
             Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(_fetchError!,
-                  style: const TextStyle(color: Colors.red, fontSize: 12)),
+              padding: const EdgeInsets.only(top: 12),
+              child: _buildInfoNote(
+                "Station & API is off — this station won't contact the ops "
+                "server, so there's no workstation list, no live process "
+                "slips, and no related errors.",
+                primaryColor,
+              ),
+            )
+          else ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Divider(),
             ),
-          if (_isFetchingWorkstations)
-            const LinearProgressIndicator()
-          else if (_isManualMode || _workstations.isEmpty)
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _workstationIdController,
-                    decoration: InputDecoration(
-                      hintText: 'Enter ID (e.g. PRD-362)',
-                      filled: true,
-                      fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
-                      isDense: true,
+                const Text(
+                  'Workstation Identity',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                // Manual entry is a LOCAL/dev convenience only — Production is
+                // select-from-list only.
+                if (!_useProductionApi)
+                  TextButton.icon(
+                    onPressed: () =>
+                        setState(() => _isManualMode = !_isManualMode),
+                    icon: Icon(
+                        _isManualMode
+                            ? Icons.list_rounded
+                            : Icons.edit_rounded,
+                        size: 16),
+                    label: Text(
+                        _isManualMode ? 'Select from List' : 'Manual Entry',
+                        style: const TextStyle(fontSize: 11)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_fetchError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(_fetchError!,
+                    style: const TextStyle(color: Colors.red, fontSize: 12)),
+              ),
+            if (_isFetchingWorkstations)
+              const LinearProgressIndicator()
+            else if (!_useProductionApi &&
+                (_isManualMode || _workstations.isEmpty))
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _workstationIdController,
+                      decoration: InputDecoration(
+                        hintText: 'Enter ID (e.g. PRD-362)',
+                        filled: true,
+                        fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none),
+                        isDense: true,
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: _saveWorkstationId,
+                    style: ElevatedButton.styleFrom(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
+                    child: const Text('Save'),
+                  ),
+                ],
+              )
+            else if (_workstations.isEmpty)
+              _buildInfoNote(
+                'No workstations available from the server yet. Check the '
+                'connection, then reopen Settings.',
+                primaryColor,
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: _workstations
+                        .any((w) => w['id'] == _workstationIdController.text)
+                    ? _workstationIdController.text
+                    : null,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none),
+                  isDense: true,
                 ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _saveWorkstationId,
-                  style: ElevatedButton.styleFrom(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10))),
-                  child: const Text('Save'),
-                ),
-              ],
-            )
-          else
-            DropdownButtonFormField<String>(
-              initialValue: _workstations
-                      .any((w) => w['id'] == _workstationIdController.text)
-                  ? _workstationIdController.text
-                  : null,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none),
-                isDense: true,
+                items: _workstations
+                    .map((ws) => DropdownMenuItem<String>(
+                        value: ws['id'],
+                        child: Text("${ws['id']} - ${ws['name']}")))
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    _workstationIdController.text = val;
+                    _saveWorkstationId();
+                  }
+                },
+                hint: const Text('Select Workstation'),
               ),
-              items: _workstations
-                  .map((ws) => DropdownMenuItem<String>(
-                      value: ws['id'],
-                      child: Text("${ws['id']} - ${ws['name']}")))
-                  .toList(),
-              onChanged: (val) {
-                if (val != null) {
-                  _workstationIdController.text = val;
-                  _saveWorkstationId();
-                }
-              },
-              hint: const Text('Select Workstation'),
+
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Divider(),
             ),
 
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Divider(),
-          ),
-
-          const Text(
-            'API Environment',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.blueGrey[50]!.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
+            const Text(
+              'API Environment',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
-            child: Row(
-              children: [
-                _buildEnvToggle(false, 'LOCAL'),
-                _buildEnvToggle(true, 'PRODUCTION'),
-              ],
+            const SizedBox(height: 8),
+            // Release builds are locked to Production; the LOCAL toggle is a
+            // development-only convenience.
+            if (kReleaseMode)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.lock_rounded,
+                        size: 14, color: Colors.blueGrey[400]),
+                    const SizedBox(width: 8),
+                    Text('PRODUCTION',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor)),
+                  ],
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    _buildEnvToggle(false, 'LOCAL'),
+                    _buildEnvToggle(true, 'PRODUCTION'),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              (kReleaseMode || _useProductionApi)
+                  ? ApiConstants.productionOpsDigiBaseUrl
+                  : ApiConstants.opsDigiBaseUrl,
+              style: TextStyle(
+                  fontSize: 10,
+                  color: primaryColor,
+                  fontWeight: FontWeight.w500),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _useProductionApi
-                ? ApiConstants.productionOpsDigiBaseUrl
-                : ApiConstants.opsDigiBaseUrl,
-            style: TextStyle(
-                fontSize: 10,
-                color: primaryColor,
-                fontWeight: FontWeight.w500),
-          ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildVideoSection(Color primaryColor) {
+    // Choosing videos only matters if the Work Instructions screen is on.
+    if (!_enabledScreens.contains(AppScreen.wiList)) {
+      return _buildDisabledScreenNotice(
+        'Work Instructions is turned off',
+        'Turn on the Work Instructions toggle in Layout & Navigation first — '
+            'choosing videos only helps when that screen is on.',
+        primaryColor,
+      );
+    }
     return _buildCard(
       child: Column(
         children: WorkInstructionsConstants.allWis.map((wi) {
@@ -923,6 +1049,56 @@ class SettingsScreenState extends State<SettingsScreen>
             child: Text(
               text,
               style: TextStyle(fontSize: 12.5, color: Colors.blueGrey[700]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shown in a config section whose screen is turned off in Layout &
+  /// Navigation — configuring it is pointless until the screen is enabled.
+  Widget _buildDisabledScreenNotice(
+    String title,
+    String message,
+    Color primaryColor,
+  ) {
+    return _buildCard(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        children: [
+          Icon(Icons.toggle_off_rounded, size: 52, color: Colors.blueGrey[300]),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.blueGrey[700],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: Colors.blueGrey[400],
+            ),
+          ),
+          const SizedBox(height: 18),
+          ElevatedButton.icon(
+            onPressed: () => openSection(SettingsScreen.sectionLayout),
+            icon: const Icon(Icons.dashboard_customize_rounded, size: 18),
+            label: const Text('Open Layout & Navigation'),
+            style: ElevatedButton.styleFrom(
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           ),
         ],
