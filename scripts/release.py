@@ -68,7 +68,7 @@ def update_pubspec(new_v):
     PUBSPEC_FILE.write_text(new_content, encoding="utf-8")
 
 def github_upload(token, tag, apk_path):
-    repo = "Renewable-Energy-Systems/wi-display"
+    repo = "Renewable-Energy-Systems/Digi_Station"
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
