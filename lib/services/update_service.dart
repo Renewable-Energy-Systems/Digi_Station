@@ -10,7 +10,7 @@ import 'config_service.dart';
 
 class UpdateService {
   final String _repoOwner = 'Renewable-Energy-Systems';
-  final String _repoName = 'wi-display';
+  final String _repoName = 'Digi_Station';
 
   // Check for updates from GitHub
   Future<Map<String, dynamic>?> checkForUpdate() async {
