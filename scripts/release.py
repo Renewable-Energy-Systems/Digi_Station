@@ -24,6 +24,15 @@ def run_cmd(cmd, cwd=PROJECT_DIR):
     except subprocess.CalledProcessError as e:
         fail(f"Command failed with exit code {e.returncode}")
 
+def run_git(args):
+    """Run a git command (shell=False, so messages with spaces stay intact)."""
+    cmd = ["git"] + args
+    print(f"Running: {' '.join(cmd)}")
+    try:
+        subprocess.check_call(cmd, cwd=str(PROJECT_DIR))
+    except subprocess.CalledProcessError as e:
+        fail(f"git command failed with exit code {e.returncode}")
+
 def get_current_version_info():
     content = PUBSPEC_FILE.read_text(encoding="utf-8")
     # Matches 'version: 1.0.0+1'
@@ -74,13 +83,9 @@ def github_upload(token, tag, apk_path):
         "target_commitish": "main",
         "name": f"{tag}",
         "body": f"## Digi Station {tag}\n\n"
-                "**Station flexibility**\n"
-                "- **Station & API can be turned off** per station - stations that don't use the ops server no longer fetch workstations or live process slips (and show no related errors).\n"
-                "- **Settings follow your layout** - a section is disabled when its screen is off in Layout & Navigation (e.g. no **Machine** while **Live Readings** is off, no video picks while **Work Instructions** is off).\n\n"
-                "**Production hardening**\n"
-                "- Release builds use the **Production** ops API only (the LOCAL toggle is a development-only convenience).\n"
-                "- In Production, the **Workstation Identity is select-from-list only** - no free-typed IDs.\n"
-                "- The production ops API is now called over **HTTPS**.",
+                "**Calibration reminders**\n"
+                "- The Home screen now shows a **calibration alert** based on the sensor's Calibration Due date.\n"
+                "- **Overdue** (red) once the due date has passed; **Due soon** (amber) within 30 days of the due date (including due today).",
         "draft": False,
         "prerelease": False
     }
@@ -136,6 +141,11 @@ def main():
         action="store_true",
         help="Release the current pubspec version as-is (do not auto-increment)",
     )
+    parser.add_argument(
+        "--no-git",
+        action="store_true",
+        help="Skip auto-committing and pushing the version bump before tagging",
+    )
     args = parser.parse_args()
     
     token = args.token or os.environ.get("GITHUB_TOKEN")
@@ -152,6 +162,15 @@ def main():
         print(f"Current Version: {cur_v}")
         print(f"Bumping to:    {new_v}")
         update_pubspec(new_v)
+
+        # Commit + push the bump BEFORE building/tagging. The GitHub release is
+        # tagged against 'main', so main must already contain this version —
+        # otherwise the tag drifts to an older commit.
+        if not args.no_git:
+            print("\n--- Committing & pushing version bump ---")
+            run_git(["add", "pubspec.yaml"])
+            run_git(["commit", "-m", f"chore(release): bump version to {new_v}"])
+            run_git(["push", "origin", "main"])
 
     # 2. Build App
     print("\n--- Building APK (Release) ---")

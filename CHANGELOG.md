@@ -4,6 +4,20 @@ All notable changes to Digi Station are recorded here. The latest section is
 also used as the **GitHub Release notes** (the in-app updater shows the release
 body to whoever installs the update).
 
+## 2.1.2 — 2026-07-29
+
+**Calibration reminders**
+- The Home screen's Sensor Information card now shows a **calibration alert**
+  based on the sensor's Calibration Due date:
+  - **Overdue** (red) once the due date has passed.
+  - **Due soon** (amber) within 30 days of the due date — including "due today".
+
+**Under the hood**
+- The release script now commits and pushes the version bump before tagging, so
+  every release tag matches the released code.
+
+---
+
 ## 2.1.1 — 2026-07-04
 
 **Station flexibility**
