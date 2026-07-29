@@ -826,6 +826,7 @@ class _SensorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final calibAlert = configured ? _buildCalibrationAlert() : null;
     return Container(
       constraints: const BoxConstraints(
         minWidth: 320,
@@ -864,6 +865,10 @@ class _SensorCard extends StatelessWidget {
             _twoColRow('Calibration Date:', calibrationDate),
             const SizedBox(height: 16),
             _twoColRow('Calibration Due:', calibrationDue),
+            if (calibAlert != null) ...[
+              const SizedBox(height: 14),
+              calibAlert,
+            ],
             const Spacer(),
             // Current Process Details inline card (only when workstation is selected)
             if (slip != null && !isSlipExpired) _buildSlipCard(),
@@ -883,6 +888,106 @@ class _SensorCard extends StatelessWidget {
         Expanded(flex: 3, child: Text(value, style: _valueStyle)),
       ],
     );
+  }
+
+  // Show a warning this many days before the calibration due date.
+  static const int _calibWarnWindowDays = 30;
+
+  /// A badge warning that the sensor calibration is overdue or coming up,
+  /// derived from [calibrationDue]. Returns null when it's still in date /
+  /// unavailable.
+  Widget? _buildCalibrationAlert() {
+    final due = _parseDate(calibrationDue);
+    if (due == null) return null;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dueDay = DateTime(due.year, due.month, due.day);
+    final daysLeft = dueDay.difference(today).inDays;
+
+    if (daysLeft < 0) {
+      final ago = -daysLeft;
+      return _calibBadge(
+        Icons.error_rounded,
+        const Color(0xFFD50000),
+        'CALIBRATION OVERDUE',
+        ago == 1 ? 'Due 1 day ago' : 'Due $ago days ago',
+      );
+    }
+    if (daysLeft <= _calibWarnWindowDays) {
+      return _calibBadge(
+        Icons.warning_amber_rounded,
+        const Color(0xFFF57C00),
+        daysLeft == 0 ? 'CALIBRATION DUE TODAY' : 'CALIBRATION DUE SOON',
+        daysLeft == 0
+            ? 'Due today'
+            : (daysLeft == 1 ? 'Due in 1 day' : 'Due in $daysLeft days'),
+      );
+    }
+    return null; // in date
+  }
+
+  Widget _calibBadge(IconData icon, Color color, String title, String sub) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.40)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    letterSpacing: 0.4,
+                    color: color,
+                  ),
+                ),
+                Text(
+                  sub,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: color.withValues(alpha: 0.95),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Parse a 'YYYY-MM-DD' (optionally with a time suffix) date; null if it
+  /// can't be understood.
+  DateTime? _parseDate(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    final m = RegExp(r'(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(t);
+    if (m != null) {
+      final y = int.tryParse(m.group(1)!);
+      final mo = int.tryParse(m.group(2)!);
+      final d = int.tryParse(m.group(3)!);
+      if (y != null && mo != null && d != null) {
+        return DateTime(y, mo, d);
+      }
+    }
+    try {
+      return DateTime.parse(t);
+    } catch (_) {
+      return null;
+    }
   }
 
   Widget _buildConfigureGuide() {
