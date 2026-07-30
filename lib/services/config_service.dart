@@ -19,6 +19,26 @@ class ConfigService {
   static const String _keyWorkstationRole = 'workstation_role';
   static const String _keyUseProductionApi = 'use_production_api';
   static const String _keyStationApiEnabled = 'station_api_enabled';
+  static const String _keyDewpointHost = 'dewpoint_host';
+
+  /// The Dewpoint live-feed server as "IP:port" (the WebSocket + HTTP sensor
+  /// API share it). Defaults to the bundled LAN IP; override it in Settings so a
+  /// network IP change doesn't require rebuilding/redeploying the APK.
+  Future<String> getDewpointHost() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_keyDewpointHost);
+    return (v == null || v.trim().isEmpty)
+        ? ApiConstants.defaultDewpointHost
+        : v.trim();
+  }
+
+  Future<void> saveDewpointHost(String hostPort) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyDewpointHost, hostPort.trim());
+  }
+
+  Future<String> getDetWsUrl() async => 'ws://${await getDewpointHost()}';
+  Future<String> getDetApiHost() async => 'http://${await getDewpointHost()}';
 
   Future<String?> getSavedMachineType() async {
     final prefs = await SharedPreferences.getInstance();

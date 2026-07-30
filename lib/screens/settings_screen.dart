@@ -4,6 +4,7 @@ import '../config/api_constants.dart';
 import '../services/config_service.dart';
 import '../services/update_service.dart';
 import '../services/screen_config_service.dart'; // Import new service
+import '../socket_service.dart';
 import 'package:ota_update/ota_update.dart';
 import '../constants/work_instructions.dart';
 
@@ -81,6 +82,7 @@ class SettingsScreenState extends State<SettingsScreen>
 
   final TextEditingController _workstationIdController =
       TextEditingController();
+  final TextEditingController _dewpointHostController = TextEditingController();
   final List<String> _selectedVideoIds = [];
 
   // Screen Visibility State
@@ -95,6 +97,7 @@ class SettingsScreenState extends State<SettingsScreen>
   @override
   void dispose() {
     _workstationIdController.dispose();
+    _dewpointHostController.dispose();
     super.dispose();
   }
 
@@ -113,6 +116,7 @@ class SettingsScreenState extends State<SettingsScreen>
     try {
       // 1. Load local preferences first
       final workstationId = await _configService.getWorkstationId();
+      final dewpointHost = await _configService.getDewpointHost();
       final machine = await _configService.getSavedMachineType();
       final savedVideoIds = await _configService.getEnabledVideoIds();
       final packageInfo = await PackageInfo.fromPlatform();
@@ -124,6 +128,7 @@ class SettingsScreenState extends State<SettingsScreen>
         setState(() {
           _selectedMachine = machine;
           _workstationIdController.text = workstationId ?? '';
+          _dewpointHostController.text = dewpointHost;
           _appVersion = packageInfo.version;
           _selectedVideoIds.clear();
           _selectedVideoIds.addAll(savedVideoIds);
@@ -236,6 +241,39 @@ class SettingsScreenState extends State<SettingsScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Workstation ID saved as "$id"')));
+    }
+  }
+
+  // host:port — an IP or hostname followed by a required port (the WS/HTTP feed
+  // needs the port, e.g. 192.168.0.76:3000).
+  static final RegExp _hostPortRe = RegExp(r'^[A-Za-z0-9.\-]+:\d{1,5}$');
+
+  Future<void> _saveDewpointHost() async {
+    final host = _dewpointHostController.text.trim();
+    if (!_hostPortRe.hasMatch(host)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Enter a valid address as IP:port — e.g. 192.168.0.76:3000'),
+          ),
+        );
+      }
+      return;
+    }
+    await _configService.saveDewpointHost(host);
+    // Live-reconnect the WebSocket right away; the HTTP sensor-info host takes
+    // full effect on the next app launch.
+    SocketService().connectDewpoint('ws://$host');
+    if (mounted) {
+      setState(() {}); // refresh the "Active" URL line below the field
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Dewpoint server set to $host. Live feed reconnecting — '
+            'restart the app to fully apply.',
+          ),
+        ),
+      );
     }
   }
 
@@ -739,6 +777,60 @@ class SettingsScreenState extends State<SettingsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // --- Dewpoint live server: always editable, because the live dew feed
+          // depends on it even when the ops Station/API below is turned off. This
+          // is the address that broke every tablet when the PC's IP changed. ---
+          const Text(
+            'Dewpoint Live Server',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            "The PC running Dewpoint Monitor, as IP:port. Update this if that PC's IP changes.",
+            style: TextStyle(fontSize: 12, color: Colors.blueGrey[400]),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _dewpointHostController,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                    hintText: 'e.g. 192.168.0.76:3000',
+                    filled: true,
+                    fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: _saveDewpointHost,
+                style: ElevatedButton.styleFrom(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10))),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Active: ws://${_dewpointHostController.text.trim()}',
+            style: TextStyle(
+                fontSize: 10,
+                color: primaryColor,
+                fontWeight: FontWeight.w500),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Divider(),
+          ),
+
           // Master switch — some stations don't use the ops API at all, so this
           // lets them turn the whole thing off (no workstations, no slips, no
           // errors) rather than fighting connection failures.

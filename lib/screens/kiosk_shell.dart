@@ -75,6 +75,7 @@ class _KioskShellState extends State<KioskShell> {
           pages.add(
             home.HomeScreen(
               key: _homeKey,
+              apiHost: widget.apiHost,
               onNavigateToSensorConfig: _goToSensorConfigPage,
             ),
           );

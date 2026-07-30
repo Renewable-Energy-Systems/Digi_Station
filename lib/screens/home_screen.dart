@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../config/api_constants.dart';
 import '../utils/dew_point_converter.dart';
 import '../socket_service.dart';
 import '../models/process_slip_model.dart';
@@ -124,9 +123,14 @@ Future<Map<String, String>> getEffectiveSensorInfo(
 }
 
 class HomeScreen extends StatefulWidget {
+  final String apiHost;
   final VoidCallback? onNavigateToSensorConfig;
 
-  const HomeScreen({super.key, this.onNavigateToSensorConfig});
+  const HomeScreen({
+    super.key,
+    required this.apiHost,
+    this.onNavigateToSensorConfig,
+  });
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -145,9 +149,9 @@ class HomeScreenState extends State<HomeScreen>
   static const valueText = Color(0xFF103B8C); // values in left card
   static const captionText = Color(0xFF7A8AA6); // "Updated: ..."
 
-  // API host & websocket url
-  final String apiHost = ApiConstants.detApiHost;
-  final String wsUrl = ApiConstants.detWsUrl;
+  // API host for the HTTP sensor-info fetch — comes from the configurable
+  // Dewpoint server address (see main.dart / Settings), not a hardcoded const.
+  String get apiHost => widget.apiHost;
 
   // Sensor info displayed in left card (can be changed locally on tablet)
   String workstationName = '';

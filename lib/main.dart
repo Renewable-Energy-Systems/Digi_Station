@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/kiosk_shell.dart';
-import 'config/api_constants.dart';
+import 'services/config_service.dart';
 import 'socket_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Resolve the (configurable) Dewpoint server host BEFORE wiring anything, so a
+  // change made in Settings takes effect without rebuilding the APK. Defaults to
+  // the bundled IP, so behaviour is unchanged until an operator edits it.
+  final config = ConfigService();
+  final wsUrl = await config.getDetWsUrl();
+  final apiHost = await config.getDetApiHost();
+
   // Initialize centralized WebSocket service (Dewpoint)
-  SocketService().connectDewpoint(ApiConstants.detWsUrl);
+  SocketService().connectDewpoint(wsUrl);
 
   // Lock orientation (fire-and-forget so it doesn't delay the first frame).
   SystemChrome.setPreferredOrientations([
@@ -16,11 +23,12 @@ void main() async {
     DeviceOrientation.landscapeRight,
   ]);
 
-  runApp(const RESKioskApp());
+  runApp(RESKioskApp(apiHost: apiHost));
 }
 
 class RESKioskApp extends StatelessWidget {
-  const RESKioskApp({super.key});
+  final String apiHost;
+  const RESKioskApp({super.key, required this.apiHost});
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +53,7 @@ class RESKioskApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: theme,
       home: KioskShell(
-        apiHost: ApiConstants.detApiHost,
+        apiHost: apiHost,
       ),
     );
   }
