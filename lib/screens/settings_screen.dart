@@ -83,6 +83,7 @@ class SettingsScreenState extends State<SettingsScreen>
   final TextEditingController _workstationIdController =
       TextEditingController();
   final TextEditingController _dewpointHostController = TextEditingController();
+  bool _editDewpointHost = false;
   final List<String> _selectedVideoIds = [];
 
   // Screen Visibility State
@@ -265,7 +266,8 @@ class SettingsScreenState extends State<SettingsScreen>
     // full effect on the next app launch.
     SocketService().connectDewpoint('ws://$host');
     if (mounted) {
-      setState(() {}); // refresh the "Active" URL line below the field
+      setState(() => _editDewpointHost = false);
+      FocusScope.of(context).unfocus(); // close the on-screen keyboard
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -275,6 +277,17 @@ class SettingsScreenState extends State<SettingsScreen>
         ),
       );
     }
+  }
+
+  Future<void> _cancelEditDewpointHost() async {
+    // Discard the typed value, restore what's saved, and drop the keyboard.
+    final saved = await _configService.getDewpointHost();
+    if (!mounted) return;
+    setState(() {
+      _dewpointHostController.text = saved;
+      _editDewpointHost = false;
+    });
+    FocusScope.of(context).unfocus();
   }
 
   Future<void> _handleCheckForUpdates() async {
@@ -777,47 +790,87 @@ class SettingsScreenState extends State<SettingsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- Dewpoint live server: always editable, because the live dew feed
-          // depends on it even when the ops Station/API below is turned off. This
-          // is the address that broke every tablet when the PC's IP changed. ---
-          const Text(
-            'Dewpoint Live Server',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          // --- Dewpoint live server. Read-only by default so a stray touch on a
+          // kiosk can't change a critical address (or pop the keyboard); tap Edit
+          // to change it. The live dew feed depends on this even when the ops
+          // Station/API below is turned off. ---
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Dewpoint Live Server',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              if (!_editDewpointHost)
+                TextButton.icon(
+                  onPressed: () => setState(() => _editDewpointHost = true),
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text('Edit', style: TextStyle(fontSize: 11)),
+                ),
+            ],
           ),
           const SizedBox(height: 2),
           Text(
-            "The PC running Dewpoint Monitor, as IP:port. Update this if that PC's IP changes.",
+            "The PC running Dewpoint Monitor, as IP:port. Tap Edit to change it if that PC's IP changes.",
             style: TextStyle(fontSize: 12, color: Colors.blueGrey[400]),
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _dewpointHostController,
-                  keyboardType: TextInputType.url,
-                  decoration: InputDecoration(
-                    hintText: 'e.g. 192.168.0.76:3000',
-                    filled: true,
-                    fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none),
-                    isDense: true,
+          if (!_editDewpointHost)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.dns_rounded, size: 16, color: Colors.blueGrey[400]),
+                  const SizedBox(width: 8),
+                  Text(
+                    _dewpointHostController.text.trim(),
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _dewpointHostController,
+                    keyboardType: TextInputType.url,
+                    autofocus: true,
+                    onSubmitted: (_) => _saveDewpointHost(),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. 192.168.0.76:3000',
+                      filled: true,
+                      fillColor: Colors.blueGrey[50]!.withValues(alpha: 0.5),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none),
+                      isDense: true,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton(
-                onPressed: _saveDewpointHost,
-                style: ElevatedButton.styleFrom(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10))),
-                child: const Text('Save'),
-              ),
-            ],
-          ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _saveDewpointHost,
+                  style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10))),
+                  child: const Text('Save'),
+                ),
+                const SizedBox(width: 4),
+                TextButton(
+                  onPressed: _cancelEditDewpointHost,
+                  child: const Text('Cancel', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
           const SizedBox(height: 8),
           Text(
             'Active: ws://${_dewpointHostController.text.trim()}',
