@@ -16,11 +16,12 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, this.onSettingsChanged});
 
   // Section indices, for deep-linking into a specific section from other screens.
-  static const int sectionLayout = 0;
+  static const int sectionConnection = 0;
   static const int sectionMachine = 1;
   static const int sectionStation = 2;
-  static const int sectionWorkInstructions = 3;
-  static const int sectionUpdates = 4;
+  static const int sectionLayout = 3;
+  static const int sectionWorkInstructions = 4;
+  static const int sectionUpdates = 5;
 
   @override
   State<SettingsScreen> createState() => SettingsScreenState();
@@ -46,7 +47,7 @@ class SettingsScreenState extends State<SettingsScreen>
   String? _fetchError;
   bool _isManualMode = false;
   bool _useProductionApi = false;
-  bool _stationApiEnabled = true;
+  bool _stationApiEnabled = false;
 
   // Currently selected settings category in the two-pane layout.
   int _selectedSection = 0;
@@ -54,9 +55,9 @@ class SettingsScreenState extends State<SettingsScreen>
   // Metadata driving the sidebar navigation and content headers.
   static const List<_SettingsSection> _sections = [
     _SettingsSection(
-      'Layout & Navigation',
-      'Choose which screens appear and in what order',
-      Icons.dashboard_customize_rounded,
+      'Connection',
+      'Dewpoint live-feed server address',
+      Icons.dns_rounded,
     ),
     _SettingsSection(
       'Machine',
@@ -67,6 +68,11 @@ class SettingsScreenState extends State<SettingsScreen>
       'Station & API',
       'Workstation identity and API environment',
       Icons.lan_rounded,
+    ),
+    _SettingsSection(
+      'Layout & Navigation',
+      'Choose which screens appear and in what order',
+      Icons.dashboard_customize_rounded,
     ),
     _SettingsSection(
       'Work Instructions',
@@ -261,6 +267,29 @@ class SettingsScreenState extends State<SettingsScreen>
       }
       return;
     }
+    // Confirm before repointing the live feed — this is a critical address.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Change Dewpoint server?'),
+        content: Text(
+          'Point this tablet\'s live feed at:\n\n$host\n\n'
+          'Make sure this matches the PC running Dewpoint Monitor. '
+          'The feed will reconnect immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await _configService.saveDewpointHost(host);
     // Live-reconnect the WebSocket right away; the HTTP sensor-info host takes
     // full effect on the next app launch.
@@ -639,14 +668,16 @@ class SettingsScreenState extends State<SettingsScreen>
   Widget _buildSectionContent(int index, Color primaryColor) {
     switch (index) {
       case 0:
-        return _buildLayoutSection(primaryColor);
+        return _buildConnectionSection(primaryColor);
       case 1:
         return _buildHardwareSection(primaryColor);
       case 2:
         return _buildStationSection(primaryColor);
       case 3:
-        return _buildVideoSection(primaryColor);
+        return _buildLayoutSection(primaryColor);
       case 4:
+        return _buildVideoSection(primaryColor);
+      case 5:
         return _buildUpdatesSection(primaryColor);
       default:
         return const SizedBox.shrink();
@@ -784,16 +815,16 @@ class SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  Widget _buildStationSection(Color primaryColor) {
+  Widget _buildConnectionSection(Color primaryColor) {
     return _buildCard(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- Dewpoint live server. Read-only by default so a stray touch on a
+          // Dewpoint live server — read-only by default so a stray touch on a
           // kiosk can't change a critical address (or pop the keyboard); tap Edit
-          // to change it. The live dew feed depends on this even when the ops
-          // Station/API below is turned off. ---
+          // to change it. This is the address that broke every tablet when the
+          // PC's IP changed.
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -875,15 +906,26 @@ class SettingsScreenState extends State<SettingsScreen>
           Text(
             'Active: ws://${_dewpointHostController.text.trim()}',
             style: TextStyle(
-                fontSize: 10,
-                color: primaryColor,
-                fontWeight: FontWeight.w500),
+                fontSize: 10, color: primaryColor, fontWeight: FontWeight.w500),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Divider(),
+          const SizedBox(height: 16),
+          _buildInfoNote(
+            "If the Dewpoint PC's IP changes, update it here — no app reinstall "
+            "needed. Best of all, give that PC a fixed IP (router DHCP "
+            "reservation) so it rarely changes.",
+            primaryColor,
           ),
+        ],
+      ),
+    );
+  }
 
+  Widget _buildStationSection(Color primaryColor) {
+    return _buildCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           // Master switch — some stations don't use the ops API at all, so this
           // lets them turn the whole thing off (no workstations, no slips, no
           // errors) rather than fighting connection failures.

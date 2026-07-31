@@ -88,7 +88,7 @@ class ConfigService {
   /// contacts the ops server (avoiding unnecessary errors). Defaults to ON.
   Future<bool> isStationApiEnabled() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_keyStationApiEnabled) ?? true;
+    return prefs.getBool(_keyStationApiEnabled) ?? false;
   }
 
   Future<void> saveStationApiEnabled(bool enabled) async {

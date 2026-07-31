@@ -575,7 +575,7 @@ class HomeScreenState extends State<HomeScreen>
 
                           if (isNarrow) {
                             return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 _SensorCard(
                                   headingText: headingText,
@@ -619,7 +619,7 @@ class HomeScreenState extends State<HomeScreen>
                           }
 
                           return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Flexible(
                                 flex: 4,
@@ -834,7 +834,6 @@ class _SensorCard extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(
         minWidth: 320,
-        maxWidth: 480,
         minHeight: 200,
       ),
       padding: const EdgeInsets.all(24),
@@ -1258,7 +1257,6 @@ class _DewPointCard extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(
         minWidth: 300,
-        maxWidth: 480,
         minHeight: 200,
       ),
       padding: const EdgeInsets.all(20),
