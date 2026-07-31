@@ -25,6 +25,10 @@ class GaugeScreenState extends State<GaugeScreen>
   String _machineName = "Unknown";
   String _machineIp = "";
   bool _machineConfigured = false;
+  // The operator can disconnect from the machine on THIS screen without changing
+  // the selected machine. While set, we won't auto-reconnect (until they tap
+  // Reconnect, or pick a different machine).
+  bool _manuallyDisconnected = false;
 
   // Pi Health
   String _piTempValue = "--";
@@ -114,13 +118,22 @@ class GaugeScreenState extends State<GaugeScreen>
         setState(() {
           _machineIp = "";
           isConnected = false;
+          _manuallyDisconnected = false;
         });
       }
       return;
     }
 
-    // Nothing changed since we last connected — leave the live values alone.
-    if (url == _machineIp) return;
+    // Picking a different machine is an explicit "connect to this" — it clears
+    // any manual disconnect from the previous machine.
+    final machineChanged = url != _machineIp;
+    if (machineChanged) _manuallyDisconnected = false;
+
+    // Same machine and the operator chose to stay disconnected → do nothing.
+    if (_manuallyDisconnected) return;
+
+    // Same machine, already wired up — leave the live values alone.
+    if (!machineChanged) return;
 
     if (mounted) {
       setState(() {
@@ -136,6 +149,28 @@ class GaugeScreenState extends State<GaugeScreen>
       });
     }
     SocketService().connect(url);
+  }
+
+  /// Disconnect from the machine on this screen only, without changing the
+  /// selected machine. Stays disconnected until Reconnect (or a machine switch).
+  void _disconnectManually() {
+    SocketService().disconnect();
+    if (mounted) {
+      setState(() {
+        _manuallyDisconnected = true;
+        isConnected = false;
+        _thicknessValue = "--.---";
+        _weightValue = "--.--";
+        _piTempValue = "--";
+        _piThrottled = null;
+      });
+    }
+  }
+
+  Future<void> _reconnectManually() async {
+    _manuallyDisconnected = false;
+    _machineIp = ""; // force a fresh dial even though the machine is unchanged
+    await _connectSocket();
   }
 
   @override
@@ -204,36 +239,50 @@ class GaugeScreenState extends State<GaugeScreen>
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: isConnected
-                      ? const Color(0xFFE8F5E9)
-                      : const Color(0xFFFFEBEE),
+                  color: _manuallyDisconnected
+                      ? const Color(0xFFF0F1F4)
+                      : isConnected
+                          ? const Color(0xFFE8F5E9)
+                          : const Color(0xFFFFEBEE),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isConnected
-                        ? Colors.green.withValues(alpha: 0.3)
-                        : Colors.red.withValues(alpha: 0.3),
+                    color: _manuallyDisconnected
+                        ? Colors.blueGrey.withValues(alpha: 0.3)
+                        : isConnected
+                            ? Colors.green.withValues(alpha: 0.3)
+                            : Colors.red.withValues(alpha: 0.3),
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isConnected ? Icons.wifi : Icons.wifi_off,
-                      color: isConnected ? Colors.green[700] : Colors.red[700],
+                      (_manuallyDisconnected || !isConnected)
+                          ? Icons.wifi_off
+                          : Icons.wifi,
+                      color: _manuallyDisconnected
+                          ? Colors.blueGrey[600]
+                          : isConnected
+                              ? Colors.green[700]
+                              : Colors.red[700],
                     ),
                     const SizedBox(width: 10),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          isConnected
-                              ? "Connected to $_machineName"
-                              : "Connecting to $_machineName...",
+                          _manuallyDisconnected
+                              ? "Disconnected from $_machineName"
+                              : isConnected
+                                  ? "Connected to $_machineName"
+                                  : "Connecting to $_machineName...",
                           style: TextStyle(
                             fontSize: 14,
-                            color: isConnected
-                                ? Colors.green[900]
-                                : Colors.red[900],
+                            color: _manuallyDisconnected
+                                ? Colors.blueGrey[800]
+                                : isConnected
+                                    ? Colors.green[900]
+                                    : Colors.red[900],
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -255,7 +304,39 @@ class GaugeScreenState extends State<GaugeScreen>
 
               const SizedBox(height: 10),
 
-              // Combined Thickness and Weight Card
+              // Disconnect / Reconnect the machine link for THIS screen only.
+              _manuallyDisconnected
+                  ? ElevatedButton.icon(
+                      onPressed: _reconnectManually,
+                      icon: const Icon(Icons.link_rounded, size: 18),
+                      label: const Text('Reconnect'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[600],
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 22, vertical: 12),
+                      ),
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: _disconnectManually,
+                      icon: const Icon(Icons.link_off_rounded, size: 18),
+                      label: const Text('Disconnect'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red[700],
+                        side: BorderSide(
+                            color: Colors.red.withValues(alpha: 0.4)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 22, vertical: 12),
+                      ),
+                    ),
+
+              const SizedBox(height: 10),
+
               // Combined Thickness and Weight Card
               _buildCombinedCard(
                 title1: "THICKNESS",
