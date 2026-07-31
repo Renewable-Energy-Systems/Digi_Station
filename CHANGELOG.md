@@ -4,6 +4,26 @@ All notable changes to Digi Station are recorded here. The latest section is
 also used as the **GitHub Release notes** (the in-app updater shows the release
 body to whoever installs the update).
 
+## 2.1.3 — 2026-07-29
+
+**Connection & setup**
+- New **Connection** section in Settings — the **Dewpoint live-feed server
+  address** is now set on the tablet, so changing the server IP no longer needs
+  an app rebuild. It stays read-only until you tap **Edit**, confirms before
+  applying, and reconnects live on save.
+- Settings setup flow reordered for a cleaner first-time setup.
+- **Station & API now defaults to off** — a new station stays quiet (no ops
+  calls) until you turn it on.
+
+**Live Readings**
+- Manual **Disconnect / Reconnect** control — pause or restore the live gauge
+  feed on demand (persists until you reconnect or switch machines).
+
+**Fixes**
+- Home dashboard cards now fill the width on any tablet size.
+
+---
+
 ## 2.1.2 — 2026-07-29
 
 **Calibration reminders**

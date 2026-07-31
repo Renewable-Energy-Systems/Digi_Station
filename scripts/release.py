@@ -83,9 +83,13 @@ def github_upload(token, tag, apk_path):
         "target_commitish": "main",
         "name": f"{tag}",
         "body": f"## Digi Station {tag}\n\n"
-                "**Calibration reminders**\n"
-                "- The Home screen now shows a **calibration alert** based on the sensor's Calibration Due date.\n"
-                "- **Overdue** (red) once the due date has passed; **Due soon** (amber) within 30 days of the due date (including due today).",
+                "**Connection & setup**\n"
+                "- New **Connection** section in Settings - the **Dewpoint server address** is now set on the tablet, so changing the server IP no longer needs an app rebuild (read-only until you tap Edit; reconnects live on save).\n"
+                "- **Station & API now defaults to off** - a new station stays quiet until you turn it on; setup flow reordered.\n\n"
+                "**Live Readings**\n"
+                "- Manual **Disconnect / Reconnect** control - pause or restore the live gauge feed on demand.\n\n"
+                "**Fixes**\n"
+                "- Home dashboard cards now fill the width on any tablet size.",
         "draft": False,
         "prerelease": False
     }
