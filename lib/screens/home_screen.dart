@@ -167,6 +167,15 @@ class HomeScreenState extends State<HomeScreen>
   String updatedAt = '––';
   String status = 'idle';
 
+  // Staleness: the WebSocket can stay connected while a sensor stops sending
+  // (e.g. it was set INACTIVE in Dewpoint Monitor), which would otherwise leave
+  // an old value showing as "LIVE". Track when we last actually received a
+  // reading for the selected column and flip to OFFLINE after this window.
+  DateTime? _lastDewUpdate;
+  bool _dewStale = false;
+  Timer? _staleTimer;
+  static const Duration _dewStaleAfter = Duration(seconds: 60);
+
   // DET column currently selected (from shared prefs)
   String selectedDetColumn = 'Det01 (C)';
 
@@ -207,6 +216,17 @@ class HomeScreenState extends State<HomeScreen>
   Future<void> _initAll() async {
     await _loadSelectedDetAndSensorInfo();
     _listenToSocket();
+    // Re-evaluate staleness periodically so a sensor that stops sending (while
+    // the socket stays connected) drops from LIVE to OFFLINE on its own.
+    _staleTimer?.cancel();
+    _staleTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      final last = _lastDewUpdate;
+      final stale =
+          last == null || DateTime.now().difference(last) > _dewStaleAfter;
+      if (stale != _dewStale && mounted) {
+        setState(() => _dewStale = stale);
+      }
+    });
     // Only fetch/stream process slips when this station uses the ops API —
     // otherwise it never contacts the ops server (no slip card, no errors).
     if (await ConfigService().isStationApiEnabled()) {
@@ -221,6 +241,7 @@ class HomeScreenState extends State<HomeScreen>
     _statusSub?.cancel();
     _sseClient?.close();
     _midnightTimer?.cancel();
+    _staleTimer?.cancel();
     _voiceAlert.stop();
     super.dispose();
   }
@@ -257,6 +278,8 @@ class HomeScreenState extends State<HomeScreen>
         dewPointDisplay = '-- °C';
         ppmDisplay = '-- ppm';
         updatedAt = '––';
+        _lastDewUpdate = null;
+        _dewStale = true;
       });
     }
 
@@ -350,6 +373,9 @@ class HomeScreenState extends State<HomeScreen>
               }
               updatedAt = updated;
               status = 'ok';
+              // A fresh reading arrived → mark data live again.
+              _lastDewUpdate = DateTime.now();
+              _dewStale = false;
             });
             _checkDewPointAlert();
           }
@@ -421,6 +447,8 @@ class HomeScreenState extends State<HomeScreen>
         dewPointDisplay = '-- °C';
         ppmDisplay = '-- ppm';
         updatedAt = '––';
+        _lastDewUpdate = null;
+        _dewStale = true;
       });
     }
     // re-subscribe to ensure WS streaming
@@ -612,7 +640,8 @@ class HomeScreenState extends State<HomeScreen>
                                   isLive:
                                       (_connState ==
                                           SocketConnectionState.connected &&
-                                      dewPointDisplay != '-- °C'),
+                                      dewPointDisplay != '-- °C' &&
+                                      !_dewStale),
                                 ),
                               ],
                             );
@@ -661,7 +690,8 @@ class HomeScreenState extends State<HomeScreen>
                                   isLive:
                                       (_connState ==
                                           SocketConnectionState.connected &&
-                                      dewPointDisplay != '-- °C'),
+                                      dewPointDisplay != '-- °C' &&
+                                      !_dewStale),
                                 ),
                               ),
                             ],
@@ -853,42 +883,133 @@ class _SensorCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Sensor Information', style: _headingStyle),
-          const SizedBox(height: 24),
-          if (!configured)
-            Expanded(child: Center(child: _buildConfigureGuide()))
-          else ...[
-            _twoColRow('Workstation name:', workstationName),
-            const SizedBox(height: 16),
-            _twoColRow('Probe ID:', probeId),
-            const SizedBox(height: 16),
-            _twoColRow('Calibration Date:', calibrationDate),
-            const SizedBox(height: 16),
-            _twoColRow('Calibration Due:', calibrationDue),
-            if (calibAlert != null) ...[
-              const SizedBox(height: 14),
-              calibAlert,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final heading = Text('Sensor Information', style: _headingStyle);
+
+          if (!configured) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                heading,
+                const SizedBox(height: 24),
+                Expanded(child: Center(child: _buildConfigureGuide())),
+              ],
+            );
+          }
+
+          final Widget? slipWidget = (slip != null && !isSlipExpired)
+              ? _buildSlipCard()
+              : (isSlipExpired ? _buildNoProductionCard() : null);
+
+          // The identity rows only. Kept separate from the calibration badge so
+          // the badge can stay FULL WIDTH — matching the process-slip card. Only
+          // these rows get auto-shrunk when a long name wraps.
+          // A Table so the label column auto-sizes to the widest label and the
+          // value column gets ALL the remaining width — a long workstation name
+          // then fits on one line at the SAME font as the other values (the
+          // per-value auto-shrink below only kicks in for something extreme).
+          final rowsBlock = Table(
+            columnWidths: const {
+              0: IntrinsicColumnWidth(),
+              1: FlexColumnWidth(),
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              _infoRow('Workstation name:', workstationName),
+              _infoRow('Probe ID:', probeId),
+              _infoRow('Calibration Date:', calibrationDate),
+              _infoRow('Calibration Due:', calibrationDue),
             ],
-            const Spacer(),
-            // Current Process Details inline card (only when workstation is selected)
-            if (slip != null && !isSlipExpired) _buildSlipCard(),
-            if (isSlipExpired) _buildNoProductionCard(),
-          ],
-        ],
+          );
+
+          // Stacked/unbounded layout: flow naturally, the card grows.
+          if (!constraints.maxHeight.isFinite) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                heading,
+                const SizedBox(height: 24),
+                rowsBlock,
+                if (calibAlert != null) ...[
+                  const SizedBox(height: 14),
+                  calibAlert,
+                ],
+                if (slipWidget != null) ...[
+                  const SizedBox(height: 14),
+                  slipWidget,
+                ],
+              ],
+            );
+          }
+
+          // Side-by-side (bounded height): heading on top; the identity rows
+          // auto-shrink (FittedBox) only if too tall (e.g. a wrapped name); the
+          // calibration badge and the process-slip card both stay FULL WIDTH so
+          // they match each other. No scroll, no overflow.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              heading,
+              const SizedBox(height: 24),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.topLeft,
+                        child: SizedBox(
+                          width: constraints.maxWidth,
+                          child: rowsBlock,
+                        ),
+                      ),
+                    ),
+                    if (calibAlert != null) ...[
+                      const SizedBox(height: 14),
+                      calibAlert,
+                    ],
+                  ],
+                ),
+              ),
+              if (slipWidget != null) ...[
+                const SizedBox(height: 12),
+                slipWidget,
+              ],
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _twoColRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  TableRow _infoRow(String label, String value) {
+    return TableRow(
       children: [
-        Expanded(flex: 2, child: Text(label, style: _labelStyle)),
-        const SizedBox(width: 12),
-        Expanded(flex: 3, child: Text(value, style: _valueStyle)),
+        Padding(
+          padding: const EdgeInsets.only(right: 16, top: 8, bottom: 8),
+          child: Text(label, style: _labelStyle),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          // Full size when it fits; auto-shrinks to a single line only for an
+          // exceptionally long value (fallback), so values stay consistent.
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                maxLines: 1,
+                softWrap: false,
+                style: _valueStyle,
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
