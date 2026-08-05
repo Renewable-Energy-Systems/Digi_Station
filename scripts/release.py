@@ -83,13 +83,9 @@ def github_upload(token, tag, apk_path):
         "target_commitish": "main",
         "name": f"{tag}",
         "body": f"## Digi Station {tag}\n\n"
-                "**Connection & setup**\n"
-                "- New **Connection** section in Settings - the **Dewpoint server address** is now set on the tablet, so changing the server IP no longer needs an app rebuild (read-only until you tap Edit; reconnects live on save).\n"
-                "- **Station & API now defaults to off** - a new station stays quiet until you turn it on; setup flow reordered.\n\n"
-                "**Live Readings**\n"
-                "- Manual **Disconnect / Reconnect** control - pause or restore the live gauge feed on demand.\n\n"
-                "**Fixes**\n"
-                "- Home dashboard cards now fill the width on any tablet size.",
+                "**Home screen**\n"
+                "- The dew point now flips to **OFFLINE** if the selected sensor stops sending for 60 seconds (even while still connected), so a stale reading no longer shows as **LIVE**.\n"
+                "- Sensor Information layout fix - long workstation / sensor names now fit on one line and the values line up.",
         "draft": False,
         "prerelease": False
     }

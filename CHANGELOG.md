@@ -4,6 +4,19 @@ All notable changes to Digi Station are recorded here. The latest section is
 also used as the **GitHub Release notes** (the in-app updater shows the release
 body to whoever installs the update).
 
+## 2.1.4 — 2026-08-05
+
+**Home screen**
+- The dew point now flips to **OFFLINE** if the selected sensor stops sending
+  for 60 seconds — even while the connection stays up — so a stale reading no
+  longer shows as **LIVE** (e.g. when a sensor is set inactive in Dewpoint
+  Monitor).
+- Sensor Information layout fix: long workstation / sensor names now fit on one
+  line and the values line up; the status badge and process-slip cards are equal
+  width.
+
+---
+
 ## 2.1.3 — 2026-07-29
 
 **Connection & setup**
